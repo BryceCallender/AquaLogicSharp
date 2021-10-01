@@ -1,0 +1,23 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AquaLogicSharp", "AquaLogicSharp\AquaLogicSharp.csproj", "{57364541-0A78-4EB5-873B-B6AEECBE862F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AquaLogicTest", "AquaLogicTest\AquaLogicTest.csproj", "{8086AD94-9507-4310-8E08-AD992B58A476}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{57364541-0A78-4EB5-873B-B6AEECBE862F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{57364541-0A78-4EB5-873B-B6AEECBE862F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{57364541-0A78-4EB5-873B-B6AEECBE862F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{57364541-0A78-4EB5-873B-B6AEECBE862F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8086AD94-9507-4310-8E08-AD992B58A476}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8086AD94-9507-4310-8E08-AD992B58A476}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8086AD94-9507-4310-8E08-AD992B58A476}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8086AD94-9507-4310-8E08-AD992B58A476}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

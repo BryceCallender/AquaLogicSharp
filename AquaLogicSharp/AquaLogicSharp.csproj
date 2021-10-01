@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net6.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <PackageVersion>0.0.1</PackageVersion>
+        <Title>AquaLogicSharp</Title>
+        <Authors>Bryce Callender</Authors>
+        <Description>Converted python library to C#. Credit to swilson (https://github.com/swilson/aqualogic/tree/master/aqualogic) for writing this library in the first place.</Description>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <PackageReference Include="Serilog" Version="2.11.0-dev-01367" />
+      <PackageReference Include="Serilog.Sinks.Console" Version="4.0.1-dev-00876" />
+      <PackageReference Include="System.IO.Ports" Version="5.0.1" />
+      <PackageReference Include="Enums.NET" Version="4.0.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <None Remove="Enums.NET" />
+    </ItemGroup>
+</Project>
