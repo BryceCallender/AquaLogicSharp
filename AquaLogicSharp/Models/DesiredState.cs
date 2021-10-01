@@ -1,5 +1,4 @@
-﻿using System;
-namespace AquaLogicSharp
+﻿namespace AquaLogicSharp.Models
 {
     public class DesiredState
     {

@@ -1,4 +1,4 @@
-namespace AquaLogicSharp
+namespace AquaLogicSharp.Models
 {
     public enum Key
     {

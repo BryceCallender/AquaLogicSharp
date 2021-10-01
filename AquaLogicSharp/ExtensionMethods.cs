@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Buffers.Binary;
+using AquaLogicSharp.Models;
 
 namespace AquaLogicSharp
 {

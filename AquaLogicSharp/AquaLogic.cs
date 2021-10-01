@@ -10,6 +10,7 @@ using System.Text.RegularExpressions;
 using EnumsNET;
 using Serilog;
 using Serilog.Core;
+using AquaLogicSharp.Models;
 
 namespace AquaLogicSharp
 {

@@ -1,6 +1,6 @@
-﻿using System;
-using Xunit;
+﻿using Xunit;
 using AquaLogicSharp;
+using AquaLogicSharp.Models;
 
 namespace AquaLogicTest
 {

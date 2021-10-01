@@ -1,6 +1,6 @@
 using System;
 
-namespace AquaLogicSharp
+namespace AquaLogicSharp.Models
 {
     [Flags]
     public enum State
