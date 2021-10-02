@@ -16,16 +16,16 @@ namespace AquaLogicSharp
 {
     public class AquaLogic
     {
-        private Socket? socket;
-        private SerialPort? serial;
-        private FileStream? fileStream;
+        private Socket? _socket;
+        private SerialPort? _serial;
+        private FileStream? _fileStream;
 
-        private Timer timer;
+        private Timer? _timer;
 
         private Action<byte[]> Write;
         private Func<byte> Read;
 
-        private Logger _logger;
+        private readonly Logger _logger;
         
         public int PoolStates { get; set; }
         public int FlashingStates { get; set; }
@@ -72,7 +72,7 @@ namespace AquaLogicSharp
         private byte[] FRAME_TYPE_PUMP_STATUS = { 0x00, 0x0c };
         #endregion
 
-        public AquaLogic(int webPort = 8129)
+        public AquaLogic()
         {
             SendQueue = new Queue<AquaLogicQueueInfo>();
             _logger = new LoggerConfiguration()
@@ -86,15 +86,15 @@ namespace AquaLogicSharp
             await ConnectSocket(host, port);
         }
 
-        public async Task ConnectSocket(string host, int port)
+        private async Task ConnectSocket(string host, int port)
         {
-            socket = new Socket(
+            _socket = new Socket(
                 AddressFamily.InterNetwork, 
                 SocketType.Stream,
                 ProtocolType.Tcp);
             
-            await socket.ConnectAsync(host, port);
-            socket.ReceiveTimeout = READ_TIMEOUT * 1000;
+            await _socket.ConnectAsync(host, port);
+            _socket.ReceiveTimeout = READ_TIMEOUT * 1000;
 
             Read = ReadByteFromSocket;
             Write = WriteToSocket;
@@ -102,7 +102,7 @@ namespace AquaLogicSharp
 
         public void ConnectSerial(string serialPortName)
         {
-            serial = new SerialPort(
+            _serial = new SerialPort(
                 serialPortName, 
                 19200,
                 Parity.None,
@@ -113,19 +113,19 @@ namespace AquaLogicSharp
             Write = WriteToSerial;
         }
 
-        public void ConnectFile(string fileName)
+        public void OpenFile(string fileName)
         {
-            fileStream = File.Open(fileName, FileMode.Open);
+            _fileStream = File.Open(fileName, FileMode.Open);
             Read = ReadByteFromFile;
             Write = WriteToFile;
         }
 
-        public void DisconnectFile()
+        public void CloseFile()
         {
-            fileStream.Dispose();
+            _fileStream?.Close();
         }
 
-        public void CheckState(object? state)
+        private void CheckState(object? state)
         {
             if (state is null)
                 return;
@@ -134,18 +134,16 @@ namespace AquaLogicSharp
             var desiredStates = data.DesiredStates ?? Array.Empty<DesiredState>();
             foreach (var desiredState in desiredStates)
             {
-                // State hasnt changed
+                // State hasn't changed
                 if(GetState(desiredState.State) != desiredState.Enabled)
                 {
-                    if (data.Retries.HasValue)
-                    {
-                        --data.Retries;
+                    if (!data.Retries.HasValue)
+                        continue;
 
-                        if (data.Retries != 0)
-                        {
-                            _logger.Information("Requeued...");
-                            SendQueue.Enqueue(data);
-                        }
+                    if (--data.Retries != 0)
+                    {
+                        _logger.Information("Requeued...");
+                        SendQueue.Enqueue(data);
                     }
                 }
                 else
@@ -155,60 +153,53 @@ namespace AquaLogicSharp
             }
         }
 
-        public byte ReadByteFromSocket()
+        private byte ReadByteFromSocket()
         {
             var bytes = new byte[1];
-            socket?.Receive(bytes);
+            _socket?.Receive(bytes);
             return bytes[0];
         }
         
-        public byte ReadByteFromSerial()
+        private byte ReadByteFromSerial()
         {
-            var data = serial?.ReadByte();
+            var data = _serial?.ReadByte();
             return Convert.ToByte(data);
         }
 
-        public byte ReadByteFromFile()
+        private byte ReadByteFromFile()
         {
-            if (fileStream is null)
+            if (_fileStream is null)
                 return 0x0;
             
-            return (byte)fileStream?.ReadByte();
+            return (byte)_fileStream.ReadByte();
         }
 
-        public void WriteToSocket(byte[] buffer)
+        private void WriteToSocket(byte[] buffer)
         {
-            socket?.Send(buffer);
+            _socket?.Send(buffer);
         }
 
-        public void WriteToSerial(byte[] buffer)
+        private void WriteToSerial(byte[] buffer)
         {
-            serial?.Write(buffer, 0, 1);
+            _serial?.Write(buffer, 0, buffer.Length);
         }
 
-        public void WriteToFile(byte[] buffer)
+        private void WriteToFile(byte[] buffer)
         {
-            fileStream?.Write(buffer);
+            _fileStream?.Write(buffer);
         }
 
-        public void SendFrame()
+        private void SendFrame()
         {
-            if (SendQueue.Count > 0)
+            if (SendQueue.Count <= 0) 
+                return;
+            
+            var data = SendQueue.Dequeue();
+            Write(data.Frame ?? Array.Empty<byte>());
+        
+            if (data.DesiredStates?.Length > 0)
             {
-                var data = SendQueue.Dequeue();
-                Write(data.Frame ?? Array.Empty<byte>());
-
-                try
-                {
-                    if (data.DesiredStates?.Length > 0)
-                    {
-                        timer = new Timer(CheckState, data, 0, 2 * 1000);
-                    }
-                }
-                catch (Exception)
-                {
-                    return;
-                }
+                _timer = new Timer(CheckState, data, 0, 2 * 1000);
             }
         }
 
@@ -233,10 +224,8 @@ namespace AquaLogicSharp
                             {
                                 break;
                             }
-                            else
-                            {
-                                continue;
-                            }
+                            
+                            continue;
                         }
 
                         byteRead = Read();
@@ -255,9 +244,9 @@ namespace AquaLogicSharp
                             var nextByte = Read();
                             if (nextByte == FRAME_ETX)
                                 break;
-                            else if (nextByte != 0)
-                            {
-                            }
+                            
+                            if (nextByte != 0)
+                                throw new Exception($"Frame ETX ({FRAME_ETX}) must come after DLE ({FRAME_DLE})");
                         }
 
                         frameData.Add(byteRead);
@@ -269,16 +258,13 @@ namespace AquaLogicSharp
                     var frameCRC = frame[^2..].FromBytes(ByteOrder.BigEndian);
                     frame = frame[..^2];
 
-                    var calculatedCRC = FRAME_DLE + FRAME_STX;
-                    foreach (var @byte in frame)
-                        calculatedCRC += @byte;
+                    var calculatedCRC = frame.Aggregate(FRAME_DLE + FRAME_STX, (current, @byte) => current + @byte);
 
                     if (frameCRC != calculatedCRC)
                     {
                         _logger.Warning("Bad CRC");
                         continue;
                     }
-                        
 
                     var frameType = frame[..2];
                     frame = frame[2..];
@@ -323,11 +309,7 @@ namespace AquaLogicSharp
                         var value = frame[..2].ToArray().FromBytes(ByteOrder.BigEndian);
                         _logger.Debug("{@time} Pump speed request: {@value}", frameStartTime, value);
 
-                        if (PumpSpeed != value)
-                        {
-                            PumpSpeed = value;
-                            callback(this);
-                        }
+                        PumpSpeed = Convert.ToInt32(CompareAndCallback(PumpSpeed, value, callback));
                     }
                     else if (frameType.SequenceEqual(FRAME_TYPE_PUMP_STATUS) && frame.Length >= 5)
                     {
@@ -339,11 +321,7 @@ namespace AquaLogicSharp
                              (((frame[4] & 0x0f))));
 
                         _logger.Debug("{@time} Pump speed: {@speed}, power: {@power} watts", frameStartTime, speed, power);
-                        if (PumpPower != power)
-                        {
-                            PumpPower = power;
-                            callback(this);
-                        }
+                        PumpPower = Convert.ToInt32(CompareAndCallback(PumpPower, power, callback));
                     }
                     else if (frameType.SequenceEqual(FRAME_TYPE_DISPLAY_UPDATE))
                     {
@@ -368,95 +346,72 @@ namespace AquaLogicSharp
 
                         try
                         {
-                            if (parts[1] == "Temp")
+                            switch (parts[1])
                             {
-                                var value = int.Parse(parts[2][0..^2]);
+                                case "Temp":
+                                {
+                                    var value = int.Parse(parts[2][0..^2]);
 
-                                if (parts[0] == "Pool")
-                                {
-                                    if (PoolTemp != value)
+                                    switch (parts[0])
                                     {
-                                        PoolTemp = value;
-                                        callback(this);
+                                        case "Pool": PoolTemp = Convert.ToInt32(CompareAndCallback(PoolTemp, value, callback));
+                                            break;
+                                        case "Spa": SpaTemp = Convert.ToInt32(CompareAndCallback(SpaTemp, value, callback));
+                                            break;
+                                        case "Air": AirTemp = Convert.ToInt32(CompareAndCallback(AirTemp, value, callback));
+                                            break;
                                     }
+                                
+                                    IsMetric = parts[2][^1] == 'C';
+                                    break;
                                 }
-                                else if (parts[0] == "Spa")
+                                case "Chlorinator":
                                 {
-                                    if (SpaTemp != value)
+                                    var value = int.Parse(parts[2][0..^1]);
+                                
+                                    switch (parts[0])
                                     {
-                                        SpaTemp = value;
-                                        callback(this);
+                                        case "Pool": PoolChlorinatorPercent = Convert.ToDouble(CompareAndCallback(PoolChlorinatorPercent, value, callback));
+                                            break;
+                                        case "Spa": SpaChlorinatorPercent = Convert.ToDouble(CompareAndCallback(SpaChlorinatorPercent, value, callback));
+                                            break;
                                     }
-                                }
-                                else if (parts[0] == "Air")
-                                {
-                                    if (AirTemp != value)
-                                    {
-                                        AirTemp = value;
-                                        callback(this);
-                                    }
-                                }
 
-                                IsMetric = parts[2][^1] == 'C';
-                            }
-                            else if (parts[1] == "Chlorinator")
-                            {
-                                var value = int.Parse(parts[2][0..^1]);
-
-                                if (parts[0] == "Pool")
-                                {
-                                    if (PoolChlorinatorPercent != value)
-                                    {
-                                        PoolChlorinatorPercent = value;
-                                        callback(this);
-                                    }
+                                    break;
                                 }
-                                else if (parts[0] == "Spa")
+                                case "Level" when parts[0] == "Salt":
                                 {
-                                    if (SpaChlorinatorPercent != value)
-                                    {
-                                        SpaChlorinatorPercent = value;
-                                        callback(this);
-                                    }
-                                }
-                            }
-                            else if (parts[0] == "Salt" && parts[1] == "Level")
-                            {
-                                var value = Math.Round(float.Parse(parts[2]), 1);
-
-                                if (SaltLevel != value)
-                                {
-                                    SaltLevel = value;
+                                    var value = Math.Round(float.Parse(parts[2]), 1);
+                                    SaltLevel = Convert.ToDouble(CompareAndCallback(SaltLevel, value, callback));
                                     IsMetric = parts[3] == "g/L";
-                                    callback(this);
+                                    break;
                                 }
-                            }
-                            else if (parts[0] == "Check" && parts[1] == "System")
-                            {
-                                var message = string.Join(" ", parts[2..]);
-                                if (CheckSystemMessage != message)
+                                case "System" when parts[0] == "Check":
                                 {
-                                    CheckSystemMessage = message;
-                                    callback(this);
+                                    var message = string.Join(" ", parts[2..]);
+                                    CheckSystemMessage = Convert.ToString(CompareAndCallback( CheckSystemMessage, message, callback));
+                                    break;
                                 }
-                            }
-                            else if (parts[0] == "Heater1")
-                            {
-                                HeaterAutoMode = parts[1] == "Auto";
+                                case "Heater1":
+                                {
+                                    HeaterAutoMode = parts[1] == "Auto";
+                                    break;
+                                }
                             }
                         }
                         catch (Exception)
                         {
-
+                            // ignored
                         }
                     }
                     else if (frameType == FRAME_TYPE_LONG_DISPLAY_UPDATE)
                     {
+                        //Does nothing at the moment
                         continue;
                     }
                     else
                     {
-                        _logger.Debug("{@time}: Unknown frame: {@type}, {@frame}", frameType.Hexlify(), frame.Hexlify());
+                        _logger.Debug("{@time}: Unknown frame: {@type}, {@frame}",  frameStartTime, frameType.Hexlify(), frame.Hexlify());
                     }
                 }
             }
@@ -466,7 +421,16 @@ namespace AquaLogicSharp
             }
         }
 
-        public void AppendData(List<byte> frame, byte[] data)
+        private object CompareAndCallback(object a, object b, Action<AquaLogic> callback)
+        {
+            if (a.Equals(b))
+                return a;
+            
+            callback(this);
+            return b;
+        }
+        
+        private void AppendData(List<byte> frame, byte[] data)
         {
             foreach(var byteData in data)
             {
@@ -476,7 +440,7 @@ namespace AquaLogicSharp
             }
         }
 
-        public List<byte> GetKeyEventFrame(Key key)
+        private List<byte> GetKeyEventFrame(Key key)
         {
             var frame = new List<byte>
             {
@@ -523,13 +487,7 @@ namespace AquaLogicSharp
 
         public List<State> GetStates()
         {
-            var stateList = new List<State>();
-
-            foreach(var value in Enums.GetValues<State>())
-            {
-                if(((int)value & PoolStates) != 0)
-                    stateList.Add(value);
-            }
+            var stateList = Enums.GetValues<State>().Where(value => ((int)value & PoolStates) != 0).ToList();
 
             if ((FlashingStates & (int)State.FILTER) != 0)
                 stateList.Add(State.FILTER_LOW_SPEED);

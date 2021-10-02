@@ -10,7 +10,7 @@ namespace AquaLogicTest
         public void TestPool()
         {
             var aquaLogic = new AquaLogic();
-            aquaLogic.ConnectFile("TestFiles/pool_on.bin");
+            aquaLogic.OpenFile("TestFiles/pool_on.bin");
             aquaLogic.Process(DataChanged);
 
             Assert.True(aquaLogic.IsMetric);
@@ -24,14 +24,14 @@ namespace AquaLogicTest
             Assert.True(aquaLogic.GetState(State.FILTER));
             Assert.False(aquaLogic.GetState(State.SPA));
 
-            aquaLogic.DisconnectFile();
+            aquaLogic.CloseFile();
         }
 
         [Fact]
         public void TestSpa()
         {
             var aquaLogic = new AquaLogic();
-            aquaLogic.ConnectFile("TestFiles/spa_on.bin");
+            aquaLogic.OpenFile("TestFiles/spa_on.bin");
             aquaLogic.Process(DataChanged);
 
             Assert.True(aquaLogic.IsMetric);
@@ -45,7 +45,7 @@ namespace AquaLogicTest
             Assert.True(aquaLogic.GetState(State.FILTER));
             Assert.True(aquaLogic.GetState(State.SPA));
 
-            aquaLogic.DisconnectFile();
+            aquaLogic.CloseFile();
         }
 
         

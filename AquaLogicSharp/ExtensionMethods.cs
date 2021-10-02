@@ -8,7 +8,7 @@ namespace AquaLogicSharp
     {
         public static byte[] ToBytes(this int value, int length, ByteOrder byteOrder)
         {
-            byte[] bytes = BitConverter.GetBytes(value);
+            var bytes = BitConverter.GetBytes(value);
             
             if (byteOrder == ByteOrder.LittleEndian)
                 Array.Reverse(bytes);
