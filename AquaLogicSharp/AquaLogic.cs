@@ -16,37 +16,39 @@ namespace AquaLogicSharp
 {
     public class AquaLogic
     {
-        private Socket? _socket;
-        private SerialPort? _serial;
-        private FileStream? _fileStream;
+        private IDataSource _dataSource;
 
         private Timer? _timer;
-
-        private Action<byte[]> Write;
-        private Func<byte> Read;
-
+        
         private readonly Logger _logger;
         
-        public int PoolStates { get; set; }
-        public int FlashingStates { get; set; }
+        public State PoolStates { get; set; }
+        public State FlashingStates { get; set; }
 
-        public bool IsMetric { get; set; }
-        public int AirTemp { get; set; }
-        public int SpaTemp { get; set; }
-        public int PoolTemp { get; set; }
+        public bool IsMetric { get; private set; }
+        public int? AirTemp { get; private set; }
+        public int? SpaTemp { get; private set; }
+        public int? PoolTemp { get; private set; }
 
-        public double PoolChlorinatorPercent { get; set; }
-        public double SpaChlorinatorPercent { get; set; }
-        public double SaltLevel { get; set; }
-        public string CheckSystemMessage { get; set; }
-        public string Status { get; set; }
-        public bool IsHeaterEnabled { get; set; }
+        public double? PoolChlorinatorPercent { get; private set; }
+        public double? SpaChlorinatorPercent { get; private set; }
+        public double? SaltLevel { get; private set; }
 
-        public int PumpSpeed { get; set; }
-        public int PumpPower { get; set; }
+        private string CheckSystemMessage { get; set; }
+
+        public string Status => GetState(State.CHECK_SYSTEM) ? CheckSystemMessage : "Ok";
+
+        public bool? IsHeaterEnabled => GetState(State.HEATER_1);
+
+        public bool? IsSuperChlorinate => GetState(State.SUPER_CHLORINATE);
+
+        public bool? Waterfall => GetState(State.AUX_2); //Waterfall is aux2
+
+        public int? PumpSpeed { get; set; }
+        public int? PumpPower { get; set; }
 
         public Queue<AquaLogicQueueInfo> SendQueue { get; }
-        public bool MultiSpeedPump { get; set; }
+        public bool? MultiSpeedPump { get; set; }
         public bool HeaterAutoMode { get; set; } = true;
         
         #region Frame constants
@@ -54,14 +56,14 @@ namespace AquaLogicSharp
         private const int FRAME_STX = 0x02;
         private const int FRAME_ETX = 0x03;
 
-        private const int READ_TIMEOUT = 5;
+        private const int READ_TIMEOUT_SECONDS = 5;
 
         // Local wired panel (black face with service button)
         private byte[] FRAME_TYPE_LOCAL_WIRED_KEY_EVENT = { 0x00, 0x02 };
         // Remote wired panel (white face)
         private byte[] FRAME_TYPE_REMOTE_WIRED_KEY_EVENT = { 0x00, 0x03 };
         // Wireless remote
-        private byte[] FRAME_TYPE_WIRELESS_KEY_EVENT = { 0x00, 0x83 };
+        private byte[] FRAME_TYPE_WIRELESS_KEY_EVENT = { 0x00, 0x8C };
         private byte[] FRAME_TYPE_ON_OFF_EVENT = { 0x00, 0x05 };   //Seems to only work for some keys
 
         private byte[] FRAME_TYPE_KEEP_ALIVE = { 0x01, 0x01 };
@@ -75,54 +77,19 @@ namespace AquaLogicSharp
         public AquaLogic()
         {
             SendQueue = new Queue<AquaLogicQueueInfo>();
+            PoolStates = State.EMPTY;
+            FlashingStates = State.EMPTY;
+
             _logger = new LoggerConfiguration()
                 .WriteTo.Console()
                 .MinimumLevel.Debug()
                 .CreateLogger();
         }
 
-        public async Task Connect(string host, int port)
+        public void Connect(IDataSource dataSource)
         {
-            await ConnectSocket(host, port);
-        }
-
-        private async Task ConnectSocket(string host, int port)
-        {
-            _socket = new Socket(
-                AddressFamily.InterNetwork, 
-                SocketType.Stream,
-                ProtocolType.Tcp);
-            
-            await _socket.ConnectAsync(host, port);
-            _socket.ReceiveTimeout = READ_TIMEOUT * 1000;
-
-            Read = ReadByteFromSocket;
-            Write = WriteToSocket;
-        }
-
-        public void ConnectSerial(string serialPortName)
-        {
-            _serial = new SerialPort(
-                serialPortName, 
-                19200,
-                Parity.None,
-                8,
-                StopBits.Two);
-
-            Read = ReadByteFromSerial;
-            Write = WriteToSerial;
-        }
-
-        public void OpenFile(string fileName)
-        {
-            _fileStream = File.Open(fileName, FileMode.Open);
-            Read = ReadByteFromFile;
-            Write = WriteToFile;
-        }
-
-        public void CloseFile()
-        {
-            _fileStream?.Close();
+            _dataSource = dataSource;
+            _dataSource.Connect();
         }
 
         private void CheckState(object? state)
@@ -143,7 +110,7 @@ namespace AquaLogicSharp
                     if (--data.Retries != 0)
                     {
                         _logger.Information("Requeued...");
-                        SendQueue.Enqueue(data);
+                        //SendQueue.Enqueue(data);
                     }
                 }
                 else
@@ -153,73 +120,47 @@ namespace AquaLogicSharp
             }
         }
 
-        private byte ReadByteFromSocket()
-        {
-            var bytes = new byte[1];
-            _socket?.Receive(bytes);
-            return bytes[0];
-        }
-        
-        private byte ReadByteFromSerial()
-        {
-            var data = _serial?.ReadByte();
-            return Convert.ToByte(data);
-        }
-
-        private byte ReadByteFromFile()
-        {
-            if (_fileStream is null)
-                return 0x0;
-            
-            return (byte)_fileStream.ReadByte();
-        }
-
-        private void WriteToSocket(byte[] buffer)
-        {
-            _socket?.Send(buffer);
-        }
-
-        private void WriteToSerial(byte[] buffer)
-        {
-            _serial?.Write(buffer, 0, buffer.Length);
-        }
-
-        private void WriteToFile(byte[] buffer)
-        {
-            _fileStream?.Write(buffer);
-        }
-
-        private void SendFrame()
+        private async Task SendFrame()
         {
             if (SendQueue.Count <= 0) 
                 return;
             
             var data = SendQueue.Dequeue();
-            Write(data.Frame ?? Array.Empty<byte>());
+            _logger.Information("Sent Frame: {@frame}", data.Frame);
+            
+            await Task.Delay(50);
+            await SendBurst(data.Frame ?? Array.Empty<byte>());
         
             if (data.DesiredStates?.Length > 0)
             {
-                _timer = new Timer(CheckState, data, 0, 2 * 1000);
+                _timer = new Timer(CheckState, data, TimeSpan.FromSeconds(2), Timeout.InfiniteTimeSpan);
             }
         }
 
-        public void Process(Action<AquaLogic> callback)
+        private async Task SendBurst(byte[] frame)
+        {
+            _logger.Information("Performing a burst write for frame... {@frame}", frame.Hexlify());
+            foreach (var i in Enumerable.Range(1,5))
+            {
+                _dataSource.Write(frame);
+                await Task.Delay(8);
+            }
+        }
+
+        public async Task Process(Action<AquaLogic> callback)
         {
             try
             {
                 while (true)
                 {
-                    var byteRead = Read();
-
-                    DateTime frameStartTime;
+                    var byteRead = _dataSource.Read();
                     var frameRxTime = DateTime.Now;
 
                     while (true)
                     {
                         if (byteRead == FRAME_DLE)
                         {
-                            frameStartTime = DateTime.Now;
-                            var nextByte = Read();
+                            var nextByte = _dataSource.Read();
                             if (nextByte == FRAME_STX)
                             {
                                 break;
@@ -228,32 +169,34 @@ namespace AquaLogicSharp
                             continue;
                         }
 
-                        byteRead = Read();
+                        byteRead = _dataSource.Read();
                         var elapsed = DateTime.Now - frameRxTime;
-                        if (elapsed.Seconds > READ_TIMEOUT)
+                        if (elapsed.Seconds > READ_TIMEOUT_SECONDS)
                             return;
                     }
 
                     var frameData = new List<byte>();
-                    byteRead = Read();
+                    byteRead = _dataSource.Read();
 
                     while (true)
                     {
                         if (byteRead == FRAME_DLE)
                         {
-                            var nextByte = Read();
+                            var nextByte = _dataSource.Read();
                             if (nextByte == FRAME_ETX)
                                 break;
-                            
+
                             if (nextByte != 0)
-                                throw new Exception($"Frame ETX ({FRAME_ETX}) must come after DLE ({FRAME_DLE})");
+                                _logger.Error($"Frame ETX ({FRAME_ETX}) must come after DLE ({FRAME_DLE})");
                         }
 
                         frameData.Add(byteRead);
-                        byteRead = Read();
+                        byteRead = _dataSource.Read();
                     }
 
                     var frame = frameData.ToArray();
+                    
+                    //_logger.Information("{frame}",  frame.Hexlify());
                     
                     var frameCRC = frame[^2..].FromBytes(ByteOrder.BigEndian);
                     frame = frame[..^2];
@@ -268,35 +211,37 @@ namespace AquaLogicSharp
 
                     var frameType = frame[..2];
                     frame = frame[2..];
-
+                    
+                    
                     if (frameType.SequenceEqual(FRAME_TYPE_KEEP_ALIVE))
                     {
                         if (SendQueue.Count > 0)
-                            SendFrame();
+                            await SendFrame();
 
                         continue;
                     }
                     else if(frameType.SequenceEqual(FRAME_TYPE_LOCAL_WIRED_KEY_EVENT))
                     {
-                        _logger.Debug("{@time} Local Wired Key: {@frame}", frameStartTime, frame.Hexlify());
+                        _logger.Debug("Local Wired Key: {@frame}", frame.Hexlify());
                     }
                     else if (frameType.SequenceEqual(FRAME_TYPE_REMOTE_WIRED_KEY_EVENT))
                     {
-                        _logger.Debug("{@time} Remote Wired Key: {@frame}", frameStartTime, frame.Hexlify());
+                        _logger.Debug("Remote Wired Key: {@frame}", frame.Hexlify());
                     }
                     else if (frameType.SequenceEqual(FRAME_TYPE_WIRELESS_KEY_EVENT))
                     {
-                        _logger.Debug("{@time} Wireless Key: {@frame}", frameStartTime, frame.Hexlify());
+                        _logger.Debug("Wireless Key: {@frame}", frame.Hexlify());
                     }
                     else if (frameType.SequenceEqual(FRAME_TYPE_LEDS))
                     {
-                        var states = frame[..4].FromBytes(ByteOrder.LittleEndian);
-                        var flashingStates = frame[4..8].FromBytes(ByteOrder.LittleEndian);
-
+                        var states = (State)frame[..4].FromBytes(ByteOrder.LittleEndian);
+                        var flashingStates = (State)frame[4..8].FromBytes(ByteOrder.LittleEndian);
+                        
                         states |= flashingStates;
                         if (HeaterAutoMode)
-                            states |= (int)State.HEATER_AUTO_MODE;
+                            states |= State.HEATER_AUTO_MODE;
 
+                        // Left this one to avoid dual callbacks
                         if (states != PoolStates || flashingStates != FlashingStates)
                         {
                             PoolStates = states;
@@ -307,7 +252,7 @@ namespace AquaLogicSharp
                     else if (frameType.SequenceEqual(FRAME_TYPE_PUMP_SPEED_REQUEST))
                     {
                         var value = frame[..2].ToArray().FromBytes(ByteOrder.BigEndian);
-                        _logger.Debug("{@time} Pump speed request: {@value}", frameStartTime, value);
+                        _logger.Debug("Pump speed request: {@value}", value);
 
                         PumpSpeed = Convert.ToInt32(CompareAndCallback(PumpSpeed, value, callback));
                     }
@@ -320,7 +265,7 @@ namespace AquaLogicSharp
                              (((frame[4] & 0xf0) >> 4) * 10) +
                              (((frame[4] & 0x0f))));
 
-                        _logger.Debug("{@time} Pump speed: {@speed}, power: {@power} watts", frameStartTime, speed, power);
+                        _logger.Debug("Pump speed: {@speed}, power: {@power} watts", speed, power);
                         PumpPower = Convert.ToInt32(CompareAndCallback(PumpPower, power, callback));
                     }
                     else if (frameType.SequenceEqual(FRAME_TYPE_DISPLAY_UPDATE))
@@ -333,7 +278,12 @@ namespace AquaLogicSharp
                             {
                                 utf8Frame[i] = 0xC2;
                                 utf8Frame.Insert(i + 1, 0xB0);
-                            }    
+                            }
+
+                            if (utf8Frame[i] == 0xBA) //random byte that should be :
+                            {
+                                utf8Frame[i] = 0x3A; // : char in bytes
+                            }
                         }
 
                         frame = utf8Frame.ToArray();
@@ -342,7 +292,7 @@ namespace AquaLogicSharp
                         text = Regex.Replace(text.TrimStart(), @"\s+", ",");
                         var parts = text.Split(',');
                         
-                        _logger.Debug("{@time} Display update: {@parts}", frameStartTime, parts);
+                        _logger.Debug("Display update: {@parts}", parts);
 
                         try
                         {
@@ -350,7 +300,7 @@ namespace AquaLogicSharp
                             {
                                 case "Temp":
                                 {
-                                    var value = int.Parse(parts[2][0..^2]);
+                                    var value = int.Parse(parts[2][..^2]);
 
                                     switch (parts[0])
                                     {
@@ -367,7 +317,7 @@ namespace AquaLogicSharp
                                 }
                                 case "Chlorinator":
                                 {
-                                    var value = int.Parse(parts[2][0..^1]);
+                                    var value = int.Parse(parts[2][..^1]);
                                 
                                     switch (parts[0])
                                     {
@@ -411,7 +361,7 @@ namespace AquaLogicSharp
                     }
                     else
                     {
-                        _logger.Debug("{@time}: Unknown frame: {@type}, {@frame}",  frameStartTime, frameType.Hexlify(), frame.Hexlify());
+                        //_logger.Debug("Unknown frame: {@type}, {@frame}", frameType.Hexlify(), frame.Hexlify());
                     }
                 }
             }
@@ -430,7 +380,7 @@ namespace AquaLogicSharp
             return b;
         }
         
-        private void AppendData(List<byte> frame, byte[] data)
+        private void AppendData(ICollection<byte> frame, IEnumerable<byte> data)
         {
             foreach(var byteData in data)
             {
@@ -440,40 +390,28 @@ namespace AquaLogicSharp
             }
         }
 
-        private List<byte> GetKeyEventFrame(Key key)
+        public List<byte> GetKeyEventFrame(Key key)
         {
+            //Must always start with 0x10 0x02 and then end with 0x10 0x03
             var frame = new List<byte>
             {
-                FRAME_DLE,
-                FRAME_STX
+                FRAME_DLE, //0x10
+                FRAME_STX  //0x02
             };
+            
+            AppendData(frame, FRAME_TYPE_WIRELESS_KEY_EVENT); //0x00 0x83 (0x8C for my system)
+            AppendData(frame, new byte[] { 0x01 });
+            AppendData(frame, ((int)key).ToBytes(4, ByteOrder.LittleEndian));
+            AppendData(frame, ((int)key).ToBytes(4, ByteOrder.LittleEndian));
+            AppendData(frame, new byte[] { 0x00 });
 
-            if ((int)key > 0xFFFF)
-            {
-                AppendData(frame, FRAME_TYPE_WIRELESS_KEY_EVENT);
-                AppendData(frame, new byte[] { 0x01 });
-                AppendData(frame, ((int)key).ToBytes(4, ByteOrder.LittleEndian));
-                AppendData(frame, ((int)key).ToBytes(4, ByteOrder.LittleEndian));
-                AppendData(frame, new byte[] { 0x00 });
-            }
-            else
-            {
-                AppendData(frame, FRAME_TYPE_LOCAL_WIRED_KEY_EVENT);
-                AppendData(frame, ((int)key).ToBytes(2, ByteOrder.LittleEndian));
-                AppendData(frame, ((int)key).ToBytes(2, ByteOrder.LittleEndian));
-            }
-
-            int crc = 0;
-            foreach (var frameByte in frame)
-            {
-                crc += frameByte;
-            }
+            var crc = frame.Aggregate(0, (current, frameByte) => current + frameByte);
 
             AppendData(frame, crc.ToBytes(2, ByteOrder.BigEndian));
 
-            frame.Add(FRAME_DLE);
-            frame.Add(FRAME_ETX);
-
+            frame.Add(FRAME_DLE); //0x10
+            frame.Add(FRAME_ETX); //0x03
+            
             return frame;
         }
 
@@ -481,15 +419,15 @@ namespace AquaLogicSharp
         {
             _logger.Information("Queueing Key: {@key}", key);
             var frame = GetKeyEventFrame(key);
-
+            
             SendQueue.Enqueue(new AquaLogicQueueInfo { Frame = frame.ToArray() });
         }
 
         public List<State> GetStates()
         {
-            var stateList = Enums.GetValues<State>().Where(value => ((int)value & PoolStates) != 0).ToList();
+            var stateList = Enums.GetValues<State>().Where(value => (value & PoolStates) != 0).ToList();
 
-            if ((FlashingStates & (int)State.FILTER) != 0)
+            if ((FlashingStates & State.FILTER) != 0)
                 stateList.Add(State.FILTER_LOW_SPEED);
 
             return stateList;
@@ -509,9 +447,9 @@ namespace AquaLogicSharp
             }
 
             if (state == State.FILTER_LOW_SPEED)
-                return ((int)State.FILTER & FlashingStates) != 0;
+                return (State.FILTER & FlashingStates) != 0;
 
-            return ((int)state & PoolStates) != 0;
+            return (state & PoolStates) != 0;
         }
 
         public bool SetState(State state, bool enable)
@@ -565,7 +503,7 @@ namespace AquaLogicSharp
             {
                 try
                 {
-                    key = Enums.Parse<Key>(nameof(state));
+                    key = Enums.Parse<Key>(state.GetName() ?? "None");
                 }
                 catch (Exception)
                 {
@@ -580,6 +518,7 @@ namespace AquaLogicSharp
             }
 
             var frame = GetKeyEventFrame(key);
+            var test = frame.ToArray().Hexlify();
 
             SendQueue.Enqueue(new AquaLogicQueueInfo
             {

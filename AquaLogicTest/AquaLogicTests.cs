@@ -1,5 +1,6 @@
 ﻿using Xunit;
 using AquaLogicSharp;
+using AquaLogicSharp.Implementation;
 using AquaLogicSharp.Models;
 
 namespace AquaLogicTest
@@ -10,7 +11,8 @@ namespace AquaLogicTest
         public void TestPool()
         {
             var aquaLogic = new AquaLogic();
-            aquaLogic.OpenFile("TestFiles/pool_on.bin");
+            var dataSource = new FileDataSource("TestFiles/pool_on.bin");
+            aquaLogic.Connect(dataSource);
             aquaLogic.Process(DataChanged);
 
             Assert.True(aquaLogic.IsMetric);
@@ -24,14 +26,15 @@ namespace AquaLogicTest
             Assert.True(aquaLogic.GetState(State.FILTER));
             Assert.False(aquaLogic.GetState(State.SPA));
 
-            aquaLogic.CloseFile();
+            dataSource.Disconnect();
         }
 
         [Fact]
         public void TestSpa()
         {
             var aquaLogic = new AquaLogic();
-            aquaLogic.OpenFile("TestFiles/spa_on.bin");
+            var dataSource = new FileDataSource("TestFiles/spa_on.bin");
+            aquaLogic.Connect(dataSource);
             aquaLogic.Process(DataChanged);
 
             Assert.True(aquaLogic.IsMetric);
@@ -45,7 +48,42 @@ namespace AquaLogicTest
             Assert.True(aquaLogic.GetState(State.FILTER));
             Assert.True(aquaLogic.GetState(State.SPA));
 
-            aquaLogic.CloseFile();
+            dataSource.Disconnect();
+        }
+
+        [Theory]
+        [InlineData(Key.RIGHT,    "01-00-00-00", "00-A1")]
+        [InlineData(Key.MENU,     "02-00-00-00", "00-A3")]
+        [InlineData(Key.LEFT,     "04-00-00-00", "00-A7")]
+        [InlineData(Key.SERVICE,  "08-00-00-00", "00-AF")]
+        [InlineData(Key.MINUS,    "10-00-00-00-00", "00-BF")]
+        [InlineData(Key.PLUS,     "20-00-00-00", "00-DF")]
+        [InlineData(Key.POOL_SPA, "40-00-00-00", "01-1F")]
+        [InlineData(Key.FILTER,   "80-00-00-00", "01-9F")]
+        [InlineData(Key.LIGHTS,   "00-01-00-00", "00-A1")]
+        [InlineData(Key.AUX_1,    "00-02-00-00", "00-A3")]
+        [InlineData(Key.AUX_2,    "00-04-00-00", "00-A7")]
+        [InlineData(Key.AUX_3,    "00-08-00-00", "00-AF")]
+        [InlineData(Key.AUX_4,    "00-10-00-00-00", "00-BF")]
+        [InlineData(Key.AUX_5,    "00-20-00-00", "00-DF")]
+        [InlineData(Key.AUX_6,    "00-40-00-00", "01-1F")]
+        [InlineData(Key.AUX_7,    "00-80-00-00", "01-9F")]
+        [InlineData(Key.VALVE_4,  "00-00-02-00", "00-A3")]
+        [InlineData(Key.HEATER_1, "00-00-04-00", "00-A7")]
+        [InlineData(Key.AUX_8,    "00-00-08-00", "00-AF")]
+        [InlineData(Key.AUX_9,    "00-00-10-00-00", "00-BF")]
+        [InlineData(Key.AUX_10,   "00-00-20-00", "00-DF")]
+        [InlineData(Key.AUX_11,   "00-00-40-00", "01-1F")]
+        [InlineData(Key.AUX_12,   "00-00-80-00", "01-9F")]
+        [InlineData(Key.AUX_13,   "00-00-00-01", "00-A1")]
+        [InlineData(Key.AUX_14,   "00-00-00-02", "00-A3")]
+        public void TestKeyEventFrame(Key key, string data, string crc)
+        {
+            const string beginningSequence = "10-02-00-8C-01";
+            const string endSequence = "10-03";
+            var aquaLogic = new AquaLogic();
+            var actualHexSequence = aquaLogic.GetKeyEventFrame(key).ToArray().Hexlify();
+            Assert.Equal($"{beginningSequence}-{data}-{data}-00-{crc}-{endSequence}", actualHexSequence);
         }
 
         

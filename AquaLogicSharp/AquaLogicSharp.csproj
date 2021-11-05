@@ -5,7 +5,10 @@
         <PackageVersion>0.0.1</PackageVersion>
         <Title>AquaLogicSharp</Title>
         <Authors>Bryce Callender</Authors>
-        <Description>Converted python library to C#. Credit to swilson (https://github.com/swilson/aqualogic/tree/master/aqualogic) for writing this library in the first place.</Description>
+        <Description>Converted python library to C#. This targets an aqualogic ps-4 device. Credit to swilson (https://github.com/swilson/aqualogic/tree/master/aqualogic) for writing this library in the first place.</Description>
+        <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+        <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
+        <RepositoryUrl>https://github.com/BryceCallender/AquaLogicSharp</RepositoryUrl>
     </PropertyGroup>
 
     <ItemGroup>
@@ -17,5 +20,6 @@
 
     <ItemGroup>
       <None Remove="Enums.NET" />
+      <None Include="LICENSE.txt" Pack="true" PackagePath="$(PackageLicenseFile)" />
     </ItemGroup>
 </Project>

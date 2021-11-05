@@ -5,6 +5,7 @@ namespace AquaLogicSharp.Models
     [Flags]
     public enum State
     {
+        EMPTY = 0,
         HEATER_1 = 1 << 0,
         VALVE_3 = 1 << 1,
         CHECK_SYSTEM = 1 << 2,
@@ -31,7 +32,7 @@ namespace AquaLogicSharp.Models
         AUX_13 = 1 << 23,
         AUX_14 = 1 << 24,
         SUPER_CHLORINATE = 1 << 25,
-        HEATER_AUTO_MODE = 1 << 30,  //This is a kludge for the heater auto mode
+        HEATER_AUTO_MODE = 1 << 30, //This is a kludge for the heater auto mode
         FILTER_LOW_SPEED = 1 << 31  //This is a kludge for the low-speed filter
     }
 }
