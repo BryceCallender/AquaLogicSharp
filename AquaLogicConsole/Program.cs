@@ -15,10 +15,10 @@ void DataChanged(AquaLogic aquaLogic)
 }
 
 var aquaLogic = new AquaLogic();
-aquaLogic.Connect(new SocketDataSource("192.168.86.247", 8899));
+await aquaLogic.Connect(new SocketDataSource("192.168.86.247", 8899));
 Console.WriteLine("Connected!");
 Console.WriteLine("To toggle a state, type in the State name, e.g. LIGHTS");
-var thread = new Thread(() => aquaLogic.Process(DataChanged));
+var thread = new Thread( () => aquaLogic.Process(DataChanged));
 thread.Start();
 
 while (true)

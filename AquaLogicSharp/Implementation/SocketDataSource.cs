@@ -10,6 +10,8 @@ public class SocketDataSource : IDataSource
     private int _port;
     
     private int READ_TIMEOUT_SECONDS = 5;
+    
+    public bool ContinueReading { get; set; } = true;
 
     public SocketDataSource(string host, int port)
     {

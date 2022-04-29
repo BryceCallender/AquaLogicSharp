@@ -20,7 +20,7 @@ namespace AquaLogicSharp
             return bytes.TakeLast(length);
         }
 
-        public static long FromBytes(this byte[] value, ByteOrder byteOrder)
+        public static int FromBytes(this byte[] value, ByteOrder byteOrder)
         {
             return byteOrder == ByteOrder.LittleEndian ? 
                 BinaryPrimitives.ReadInt16LittleEndian(value) : 
@@ -30,6 +30,11 @@ namespace AquaLogicSharp
         public static string Hexlify(this byte[] value)
         {
             return BitConverter.ToString(value);
+        }
+
+        public static bool Is(this State state, State matchState)
+        {
+            return state == matchState;
         }
     }
 }

@@ -4,6 +4,8 @@ namespace AquaLogicSharp;
 
 public interface IDataSource
 {
+    public bool ContinueReading { get; set; }
+    
     public Task Connect();
 
     public byte Read();

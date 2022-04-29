@@ -1,4 +1,5 @@
-﻿using Xunit;
+﻿using System.Threading.Tasks;
+using Xunit;
 using AquaLogicSharp;
 using AquaLogicSharp.Implementation;
 using AquaLogicSharp.Models;
@@ -8,18 +9,18 @@ namespace AquaLogicTest
     public class AquaLogicTests
     {
         [Fact]
-        public void TestPool()
+        public async Task TestPool()
         {
             var aquaLogic = new AquaLogic();
             var dataSource = new FileDataSource("TestFiles/pool_on.bin");
-            aquaLogic.Connect(dataSource);
-            aquaLogic.Process(DataChanged);
+            await aquaLogic.Connect(dataSource);
+            await aquaLogic.Process(DataChanged);
 
             Assert.True(aquaLogic.IsMetric);
             Assert.Equal(-6, aquaLogic.AirTemp);
             Assert.Equal(-7, aquaLogic.PoolTemp);
-            Assert.Equal(0, aquaLogic.SpaTemp);
-            Assert.Equal(0, aquaLogic.PoolChlorinatorPercent);
+            Assert.Null( aquaLogic.SpaTemp);
+            Assert.Null(aquaLogic.PoolChlorinatorPercent);
             Assert.Equal(3, aquaLogic.SpaChlorinatorPercent);
             Assert.Equal(3.1, aquaLogic.SaltLevel);
             Assert.True(aquaLogic.GetState(State.POOL));
@@ -30,18 +31,18 @@ namespace AquaLogicTest
         }
 
         [Fact]
-        public void TestSpa()
+        public async Task TestSpa()
         {
             var aquaLogic = new AquaLogic();
             var dataSource = new FileDataSource("TestFiles/spa_on.bin");
-            aquaLogic.Connect(dataSource);
-            aquaLogic.Process(DataChanged);
+            await aquaLogic.Connect(dataSource);
+            await aquaLogic.Process(DataChanged);
 
             Assert.True(aquaLogic.IsMetric);
             Assert.Equal(-6, aquaLogic.AirTemp);
-            Assert.Equal(0, aquaLogic.PoolTemp);
+            Assert.Null(aquaLogic.PoolTemp);
             Assert.Equal(-7, aquaLogic.SpaTemp);
-            Assert.Equal(0, aquaLogic.PoolChlorinatorPercent);
+            Assert.Null(aquaLogic.PoolChlorinatorPercent);
             Assert.Equal(3, aquaLogic.SpaChlorinatorPercent);
             Assert.Equal(3.1, aquaLogic.SaltLevel);
             Assert.False(aquaLogic.GetState(State.POOL));
@@ -86,8 +87,7 @@ namespace AquaLogicTest
             Assert.Equal($"{beginningSequence}-{data}-{data}-00-{crc}-{endSequence}", actualHexSequence);
         }
 
-        
-        public void DataChanged(AquaLogic aquaLogic)
+        private static void DataChanged(AquaLogic aquaLogic)
         {
 
         }

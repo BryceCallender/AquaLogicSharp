@@ -9,6 +9,8 @@ public class SerialDataSource : IDataSource
     private SerialPort? _serial;
     private string _serialPortName;
 
+    public bool ContinueReading { get; set; } = true;
+
     public SerialDataSource(string serialPortName)
     {
         _serialPortName = serialPortName;
