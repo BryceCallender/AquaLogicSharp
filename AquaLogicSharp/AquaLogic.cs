@@ -305,7 +305,7 @@ namespace AquaLogicSharp
                 
                 var displayText = System.Text.Encoding.UTF8.GetString(frame.ToArray());
                 displayText = Regex.Replace(displayText.TrimStart(), @"\s+", ",");
-                var parts = Display.Split(',');
+                var parts = displayText.Split(',');
 
                 _logger.Debug("Display update: {Parts}", parts);
 
@@ -329,7 +329,7 @@ namespace AquaLogicSharp
 
                             var text = string.Join(' ', parts[..2]);
                             var temp = parts[2].Replace('_', '\u00B0');
-                            Display = text + temp;
+                            Display = string.Join(',', text, temp);
                             IsMetric = parts[2][^1] == 'C';
                             break;
                         }
@@ -346,7 +346,7 @@ namespace AquaLogicSharp
                             }
 
                             var text = string.Join(' ', parts[..2]);
-                            Display = text + parts[2];
+                            Display = string.Join(',', text, parts[2]);
                             break;
                         }
                         case "Level" when parts[0] == "Salt":
@@ -356,8 +356,8 @@ namespace AquaLogicSharp
                             IsMetric = parts[3] == "g/L";
                             
                             var text = string.Join(' ', parts[..2]);
-                            var ppm = string.Join(' ', parts[1..]);
-                            Display = text + parts[2];
+                            var ppm = string.Join(' ', parts[2..]);
+                            Display = string.Join(',', text, ppm);
                             break;
                         }
                         case "System" when parts[0] == "Check":
@@ -366,15 +366,15 @@ namespace AquaLogicSharp
                             CheckSystemMessage = CompareAndCallback(nameof(CheckSystemMessage), CheckSystemMessage, message, dataChangedCallback);
                             break;
                         }
-                        case "Heater1":
-                        {
-                            HeaterAutoMode = parts[1] == "Auto";
-                            Display = string.Join(' ', parts);
-                            break;
-                        }
+                    }
+
+                    if (parts[0] == "Heater1")
+                    {
+                        HeaterAutoMode = parts[1] == "Auto";
+                        Display = $"Heater,{(HeaterAutoMode ? "Auto" : "Manual")} Control";
                     }
                     
-                    Display = CompareAndCallback(nameof(Display), Display, displayText, dataChangedCallback);
+                    DisplayUpdated(displayText, dataChangedCallback);
                 }
                 catch (Exception ex)
                 {
@@ -400,6 +400,12 @@ namespace AquaLogicSharp
             AddVariance(name, a,b);
             CallbackAndClearVariances(callback);
             return b;
+        }
+
+        private void DisplayUpdated(string before, Action<AquaLogic> callback)
+        {
+            Variances.Add(new Variance { Prop = "Display", Before = before, After = Display });
+            CallbackAndClearVariances(callback);
         }
 
         private void AddVariance(string name, object? before, object? after)
