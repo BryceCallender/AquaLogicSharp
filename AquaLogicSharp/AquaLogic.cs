@@ -3,7 +3,10 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
+using System.Net;
+using System.Net.NetworkInformation;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using EnumsNET;
 using Serilog;
@@ -18,11 +21,11 @@ namespace AquaLogicSharp
         private Timer? _timer;
         private readonly Logger _logger;
         
-        public Queue<AquaLogicQueueInfo> SendQueue { get; }
+        private Queue<AquaLogicQueueInfo> SendQueue { get; }
 
         public List<Variance> Variances { get; set; }
 
-        public string Display { get; set; }
+        public Display Display { get; set; }
         
         public State PoolStates { get; set; }
         public State FlashingStates { get; set; }
@@ -76,11 +79,20 @@ namespace AquaLogicSharp
             Variances = new List<Variance>();
             PoolStates = State.EMPTY;
             FlashingStates = State.EMPTY;
+            Display = new Display();
 
             _logger = new LoggerConfiguration()
                 .WriteTo.Console()
                 .MinimumLevel.Debug()
                 .CreateLogger();
+
+            // var ping = new Ping();
+            // var pingReply = ping.Send(IPAddress.Parse("192.168.86.247"));
+            //
+            // if (pingReply.Status == IPStatus.Success)
+            // {
+            //     Console.WriteLine(pingReply.RoundtripTime);
+            // }
         }
 
         public async Task Connect(IDataSource dataSource)
@@ -94,6 +106,8 @@ namespace AquaLogicSharp
             if (state is null)
                 return;
             
+            _logger.Information("Checking pool state...");
+            
             var data = (AquaLogicQueueInfo)state;
             var desiredStates = data.DesiredStates ?? Array.Empty<DesiredState>();
             foreach (var desiredState in desiredStates)
@@ -106,7 +120,7 @@ namespace AquaLogicSharp
 
                     if (--data.Retries != 0)
                     {
-                        _logger.Information("Requeued...");
+                        _logger.Information("Requeue...");
                         SendQueue.Enqueue(data);
                     }
                 }
@@ -117,16 +131,16 @@ namespace AquaLogicSharp
             }
         }
 
-        private async Task SendFrame()
+        private void SendFrame()
         {
             if (SendQueue.Count <= 0) 
                 return;
             
             var data = SendQueue.Dequeue();
-            _logger.Information("Sent Frame: {Frame}", data.Frame);
             
-            await Task.Delay(50);
-            await SendBurst(data.Frame ?? Array.Empty<byte>());
+            _dataSource.Write(data.Frame ?? Array.Empty<byte>());
+            // await SendBurst(data.Frame ?? Array.Empty<byte>());
+            _logger.Information("Sent Frame: {Frame}", data.Frame?.Hexlify());
         
             if (data.DesiredStates?.Length > 0)
             {
@@ -161,14 +175,14 @@ namespace AquaLogicSharp
 
                     if (frameCRC != calculatedCRC)
                     {
-                        _logger.Warning("Bad CRC");
+                        _logger.Warning("Bad CRC: Got {Calculated}, expected {Frame}", calculatedCRC, frameCRC);
                         continue;
                     }
 
                     var frameType = frame[..2];
                     frame = frame[2..];
                     
-                    await HandleFrames(frameType, frame, callback);
+                    HandleFrames(frameType, frame, callback);
                 }
             }
             catch(Exception ex)
@@ -216,7 +230,7 @@ namespace AquaLogicSharp
                         break;
 
                     if (nextByte != 0)
-                        _logger.Error($"Frame ETX ({FRAME_ETX}) must come after DLE ({FRAME_DLE})");
+                        _logger.Error("Frame ETX ({Etx}) must come after DLE ({Dle})", FRAME_ETX, FRAME_DLE);
                 }
 
                 frameData.Add(byteRead);
@@ -226,12 +240,12 @@ namespace AquaLogicSharp
             return frameData;
         }
 
-        private async Task HandleFrames(byte[] frameType, byte[] frame, Action<AquaLogic> dataChangedCallback)
+        private void HandleFrames(byte[] frameType, byte[] frame, Action<AquaLogic> dataChangedCallback)
         {
             if (frameType.SequenceEqual(FRAME_TYPE_KEEP_ALIVE))
             {
                 if (SendQueue.Count > 0)
-                    await SendFrame();
+                    SendFrame();
             }
             else if(frameType.SequenceEqual(FRAME_TYPE_LOCAL_WIRED_KEY_EVENT))
             {
@@ -294,18 +308,13 @@ namespace AquaLogicSharp
                         utf8Frame[i] = 0xC2;
                         utf8Frame.Insert(i + 1, 0xB0);
                     }
-
-                    if (utf8Frame[i] == 0xBA) //random byte that should be :
-                    {
-                        utf8Frame[i] = 0x3A; // : char in bytes
-                    }
                 }
 
                 frame = utf8Frame.ToArray();
                 
-                var displayText = System.Text.Encoding.UTF8.GetString(frame.ToArray());
-                displayText = Regex.Replace(displayText.TrimStart(), @"\s+", ",");
-                var parts = displayText.Split(',');
+                Display.Parse(frame);
+                var parts = Display.DisplaySections.Select(d => d.Content).ToArray();
+                Console.WriteLine(Display);
 
                 _logger.Debug("Display update: {Parts}", parts);
 
@@ -326,11 +335,9 @@ namespace AquaLogicSharp
                                 case "Air": AirTemp = CompareAndCallback(nameof(AirTemp), AirTemp, value, dataChangedCallback);
                                     break;
                             }
-
-                            var text = string.Join(' ', parts[..2]);
-                            var temp = parts[2].Replace('_', '\u00B0');
-                            Display = string.Join(',', text, temp);
+                            
                             IsMetric = parts[2][^1] == 'C';
+                            
                             break;
                         }
                         case "Chlorinator":
@@ -344,9 +351,7 @@ namespace AquaLogicSharp
                                 case "Spa": SpaChlorinatorPercent = CompareAndCallback(nameof(SpaChlorinatorPercent), SpaChlorinatorPercent, value, dataChangedCallback);
                                     break;
                             }
-
-                            var text = string.Join(' ', parts[..2]);
-                            Display = string.Join(',', text, parts[2]);
+                            
                             break;
                         }
                         case "Level" when parts[0] == "Salt":
@@ -354,10 +359,7 @@ namespace AquaLogicSharp
                             var value = Math.Round(float.Parse(parts[2]), 1);
                             SaltLevel = CompareAndCallback(nameof(SaltLevel), SaltLevel, value, dataChangedCallback);
                             IsMetric = parts[3] == "g/L";
-                            
-                            var text = string.Join(' ', parts[..2]);
-                            var ppm = string.Join(' ', parts[2..]);
-                            Display = string.Join(',', text, ppm);
+
                             break;
                         }
                         case "System" when parts[0] == "Check":
@@ -371,10 +373,10 @@ namespace AquaLogicSharp
                     if (parts[0] == "Heater1")
                     {
                         HeaterAutoMode = parts[1] == "Auto";
-                        Display = $"Heater,{(HeaterAutoMode ? "Auto" : "Manual")} Control";
+                        //Display = $"Heater,{(HeaterAutoMode ? "Auto" : "Manual")} Control";
                     }
                     
-                    DisplayUpdated(displayText, dataChangedCallback);
+                    DisplayUpdated(dataChangedCallback);
                 }
                 catch (Exception ex)
                 {
@@ -402,9 +404,9 @@ namespace AquaLogicSharp
             return b;
         }
 
-        private void DisplayUpdated(string before, Action<AquaLogic> callback)
+        private void DisplayUpdated(Action<AquaLogic> callback)
         {
-            Variances.Add(new Variance { Prop = "Display", Before = before, After = Display });
+            Variances.Add(new Variance { Prop = "Display" });
             CallbackAndClearVariances(callback);
         }
 
@@ -421,7 +423,13 @@ namespace AquaLogicSharp
         private void CallbackAndClearVariances(Action<AquaLogic> callback)
         {
             callback(this);
-            _logger.Information("{Variances}", JsonSerializer.Serialize(Variances));
+            
+            JsonSerializerOptions options = new()
+            {
+                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+            };
+            
+            _logger.Information("{Variances}", JsonSerializer.Serialize(Variances, options));
             Variances.Clear();
         }
         
@@ -443,12 +451,22 @@ namespace AquaLogicSharp
                 FRAME_DLE, //0x10
                 FRAME_STX  //0x02
             };
+
+            if ((int)key > 0xFFFF)
+            {
+                AppendData(frame, FRAME_TYPE_WIRELESS_KEY_EVENT); //0x00 0x83 (0x8C for my system)
+                AppendData(frame, new byte[] { 0x01 });
+                AppendData(frame, ((int)key).ToBytes(4, ByteOrder.LittleEndian));
+                AppendData(frame, ((int)key).ToBytes(4, ByteOrder.LittleEndian));
+                AppendData(frame, new byte[] { 0x00 });
+            }
+            else
+            {
+                AppendData(frame, FRAME_TYPE_LOCAL_WIRED_KEY_EVENT); //0x00 0x02
+                AppendData(frame, ((int)key).ToBytes(2, ByteOrder.LittleEndian));
+                AppendData(frame, ((int)key).ToBytes(2, ByteOrder.LittleEndian));
+            }
             
-            AppendData(frame, FRAME_TYPE_WIRELESS_KEY_EVENT); //0x00 0x83 (0x8C for my system)
-            AppendData(frame, new byte[] { 0x01 });
-            AppendData(frame, ((int)key).ToBytes(4, ByteOrder.LittleEndian));
-            AppendData(frame, ((int)key).ToBytes(4, ByteOrder.LittleEndian));
-            AppendData(frame, new byte[] { 0x00 });
 
             var crc = frame.Aggregate(0, (current, frameByte) => current + frameByte);
 
@@ -491,10 +509,7 @@ namespace AquaLogicSharp
                 }
             }
 
-            if (state.Is(State.FILTER_LOW_SPEED))
-                return FlashingStates.HasFlag(State.FILTER);
-
-            return PoolStates.HasFlag(state);
+            return state.Is(State.FILTER_LOW_SPEED) ? FlashingStates.HasFlag(State.FILTER) : PoolStates.HasFlag(state);
         }
 
         public bool SetState(State state, bool enable)
@@ -503,23 +518,10 @@ namespace AquaLogicSharp
             if (enable == isStateEnabled)
                 return true;
 
-            var key = Key.NONE;
+            Key key;
             var desiredStates = new List<DesiredState>();
 
-            if (state.HasFlag(State.FILTER_LOW_SPEED))
-            {
-                /***
-                 * Send the FILTER key once.
-                 * If the pump is in high speed, it will switch to low speed.
-                 * If the pump is off the retry mechanism will send an additional
-                 * FILTER key to switch into low speed.
-                 * If the pump is in low speed then we pretend the pump is off;
-                 * the retry mechanism will send an additional FILTER key
-                 * to switch into high speed.
-                ***/
-                key = Key.FILTER;
-            }
-            else if (state.HasFlag(State.HEATER_AUTO_MODE))
+            if (state.HasFlag(State.HEATER_AUTO_MODE))
             {
                 key = Key.HEATER_1;
                 desiredStates.Add(new DesiredState
@@ -545,15 +547,11 @@ namespace AquaLogicSharp
             }
             else
             {
-                try
-                {
-                    key = Enums.Parse<Key>(state.GetName() ?? "None");
-                }
-                catch (Exception)
-                {
-                    return false;
-                }
+                var result = Enums.TryParse(state.GetName(), out key);
 
+                if (!result)
+                    return false;
+                
                 desiredStates.Add(new DesiredState
                 {
                     State = state,

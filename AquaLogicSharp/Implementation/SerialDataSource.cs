@@ -7,7 +7,7 @@ namespace AquaLogicSharp.Implementation;
 public class SerialDataSource : IDataSource
 {
     private SerialPort? _serial;
-    private string _serialPortName;
+    private readonly string _serialPortName;
 
     public bool ContinueReading { get; set; } = true;
 

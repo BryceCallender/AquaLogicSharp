@@ -29,6 +29,11 @@ public class SocketDataSource : IDataSource
         await _socket.ConnectAsync(_host, _port);
         _socket.ReceiveTimeout = READ_TIMEOUT_SECONDS * 1000;
     }
+
+    public void Disconnect()
+    {
+        _socket!.Disconnect(true);
+    }
     
     public byte Read()
     {

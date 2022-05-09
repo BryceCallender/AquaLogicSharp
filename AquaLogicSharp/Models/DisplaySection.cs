@@ -1,6 +1,7 @@
 namespace AquaLogicSharp.Models;
 
-public class DisplaySection
+public record DisplaySection
 {
-    
+    public string Content { get; set; }
+    public bool Blinking { get; set; }
 }
