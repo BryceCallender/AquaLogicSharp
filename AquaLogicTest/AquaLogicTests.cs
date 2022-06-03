@@ -1,4 +1,5 @@
-﻿using System.Threading.Tasks;
+﻿using System.Collections.Generic;
+using System.Threading.Tasks;
 using Xunit;
 using AquaLogicSharp;
 using AquaLogicSharp.Implementation;
@@ -86,6 +87,39 @@ namespace AquaLogicTest
             var aquaLogic = new AquaLogic();
             var actualHexSequence = aquaLogic.GetKeyEventFrame(key).ToArray().Hexlify();
             Assert.Equal($"{beginningSequence}-{data}-{data}-00-{crc}-{endSequence}", actualHexSequence);
+        }
+
+        [Theory]
+        [InlineData(new byte[] {32,32,65,105,114,32,84,101,109,112,32,32,32,56,52,95,70,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,32,0 })]
+        public void TestDisplayReader(byte[] bytes)
+        {
+            var display = new Display();
+            
+            display.Parse(bytes);
+
+            var expected = new List<DisplaySection>
+            {
+                new()
+                {
+                    Content = "Air",
+                    Blinking = false,
+                    DisplayRow = 1
+                },
+                new()
+                {
+                    Content = "Temp",
+                    Blinking = false,
+                    DisplayRow = 1
+                },
+                new()
+                {
+                    Content = "84_F",
+                    Blinking = false,
+                    DisplayRow = 2
+                }
+            };
+            
+            Assert.Equal(expected, display.DisplaySections);
         }
 
         private static void DataChanged(AquaLogic aquaLogic)

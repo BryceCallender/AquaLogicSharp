@@ -3,11 +3,8 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
-using System.Net;
-using System.Net.NetworkInformation;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Text.RegularExpressions;
 using EnumsNET;
 using Serilog;
 using Serilog.Core;
@@ -49,6 +46,8 @@ namespace AquaLogicSharp
         public int? PumpPower { get; set; }
         public bool? MultiSpeedPump { get; set; }
         public bool HeaterAutoMode { get; set; } = true;
+
+        public bool MenuLocked { get; set; }
         
         #region Frame constants
         private const int FRAME_DLE = 0x10;
@@ -85,14 +84,6 @@ namespace AquaLogicSharp
                 .WriteTo.Console()
                 .MinimumLevel.Debug()
                 .CreateLogger();
-
-            // var ping = new Ping();
-            // var pingReply = ping.Send(IPAddress.Parse("192.168.86.247"));
-            //
-            // if (pingReply.Status == IPStatus.Success)
-            // {
-            //     Console.WriteLine(pingReply.RoundtripTime);
-            // }
         }
 
         public async Task Connect(IDataSource dataSource)
@@ -131,15 +122,15 @@ namespace AquaLogicSharp
             }
         }
 
-        private void SendFrame()
+        private async Task SendFrame()
         {
             if (SendQueue.Count <= 0) 
                 return;
             
             var data = SendQueue.Dequeue();
             
-            _dataSource.Write(data.Frame ?? Array.Empty<byte>());
-            // await SendBurst(data.Frame ?? Array.Empty<byte>());
+            //_dataSource.Write(data.Frame ?? Array.Empty<byte>());
+            await SendBurst(data.Frame ?? Array.Empty<byte>());
             _logger.Information("Sent Frame: {Frame}", data.Frame?.Hexlify());
         
             if (data.DesiredStates?.Length > 0)
@@ -151,7 +142,7 @@ namespace AquaLogicSharp
         private async Task SendBurst(byte[] frame)
         {
             _logger.Information("Performing a burst write for frame... {Frame}", frame.Hexlify());
-            foreach (var i in Enumerable.Range(1,5))
+            foreach (var _ in Enumerable.Range(1,5))
             {
                 _dataSource.Write(frame);
                 await Task.Delay(8);
@@ -182,7 +173,7 @@ namespace AquaLogicSharp
                     var frameType = frame[..2];
                     frame = frame[2..];
                     
-                    HandleFrames(frameType, frame, callback);
+                    await HandleFrames(frameType, frame, callback);
                 }
             }
             catch(Exception ex)
@@ -240,12 +231,14 @@ namespace AquaLogicSharp
             return frameData;
         }
 
-        private void HandleFrames(byte[] frameType, byte[] frame, Action<AquaLogic> dataChangedCallback)
+        private async Task HandleFrames(byte[] frameType, byte[] frame, Action<AquaLogic> dataChangedCallback)
         {
             if (frameType.SequenceEqual(FRAME_TYPE_KEEP_ALIVE))
             {
+                //_logger.Information("Keep Alive: {Time}", DateTime.Now.TimeOfDay);
+                
                 if (SendQueue.Count > 0)
-                    SendFrame();
+                    await SendFrame();
             }
             else if(frameType.SequenceEqual(FRAME_TYPE_LOCAL_WIRED_KEY_EVENT))
             {
@@ -314,7 +307,6 @@ namespace AquaLogicSharp
                 
                 Display.Parse(frame);
                 var parts = Display.DisplaySections.Select(d => d.Content).ToArray();
-                Console.WriteLine(Display);
 
                 _logger.Debug("Display update: {Parts}", parts);
 
@@ -373,9 +365,13 @@ namespace AquaLogicSharp
                     if (parts[0] == "Heater1")
                     {
                         HeaterAutoMode = parts[1] == "Auto";
-                        //Display = $"Heater,{(HeaterAutoMode ? "Auto" : "Manual")} Control";
                     }
-                    
+
+                    if (parts.Contains("Menu Locked"))
+                    {
+                        MenuLocked = true;
+                    }
+                
                     DisplayUpdated(dataChangedCallback);
                 }
                 catch (Exception ex)
@@ -389,8 +385,10 @@ namespace AquaLogicSharp
             }
             else
             {
-                _logger.Debug("Unknown frame: {Type}, {Frame}", frameType.Hexlify(), frame.Hexlify());
+                //_logger.Debug("Unknown frame: {Type}, {Frame}", frameType.Hexlify(), frame.Hexlify());
             }
+            
+            //_logger.Debug("Debug Frame: {Type}, {Frame}", frameType.Hexlify(), frame.Hexlify());
         }
 
 
@@ -452,24 +450,23 @@ namespace AquaLogicSharp
                 FRAME_STX  //0x02
             };
 
-            if ((int)key > 0xFFFF)
-            {
+            // if ((int)key > 0xFFFF)
+            // {
                 AppendData(frame, FRAME_TYPE_WIRELESS_KEY_EVENT); //0x00 0x83 (0x8C for my system)
                 AppendData(frame, new byte[] { 0x01 });
                 AppendData(frame, ((int)key).ToBytes(4, ByteOrder.LittleEndian));
                 AppendData(frame, ((int)key).ToBytes(4, ByteOrder.LittleEndian));
                 AppendData(frame, new byte[] { 0x00 });
-            }
-            else
-            {
-                AppendData(frame, FRAME_TYPE_LOCAL_WIRED_KEY_EVENT); //0x00 0x02
-                AppendData(frame, ((int)key).ToBytes(2, ByteOrder.LittleEndian));
-                AppendData(frame, ((int)key).ToBytes(2, ByteOrder.LittleEndian));
-            }
-            
+            // }
+            // else
+            // {
+            //     AppendData(frame, FRAME_TYPE_LOCAL_WIRED_KEY_EVENT); //0x00 0x02
+            //     AppendData(frame, ((int)key).ToBytes(2, ByteOrder.LittleEndian));
+            //     AppendData(frame, ((int)key).ToBytes(2, ByteOrder.LittleEndian));
+            // }
 
             var crc = frame.Aggregate(0, (current, frameByte) => current + frameByte);
-
+            
             AppendData(frame, crc.ToBytes(2, ByteOrder.BigEndian));
 
             frame.Add(FRAME_DLE); //0x10

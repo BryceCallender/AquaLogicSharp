@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace AquaLogicSharp.Models;
 
 public class Variance

@@ -9,8 +9,8 @@ public class Display
 {
     public List<DisplaySection> DisplaySections { get; }
 
-    private const int BlinkingFlag = 1 << 7;
-    
+    private const int BlinkingFlag = 1 << 7;        
+
     public Display()
     {
         DisplaySections = new List<DisplaySection>();
@@ -22,53 +22,36 @@ public class Display
             return;
         
         DisplaySections.Clear();
-        
+
+        var byteReader = new ByteReader(bytes);
         var viableBytes = new List<byte[]>();
-        var byteData = new List<byte>();
+        var rowValues = new List<int>();
         
-        var index = 0;
-        while (index < bytes.Length)
+        var row = 1;
+
+        // Get past spaces if in front
+        byteReader.ReadWhitespace();
+
+        var displayBytes = byteReader.ReadDisplaySequence();
+        while (!byteReader.IsEoF)
         {
-            if (bytes[index] == 32)
+            if (displayBytes.Length > 0)
             {
-                // get past random spaces in the beginning
-                while (bytes[index] == 32)
-                {
-                    index++;
-                }
-				
-                // read the data
-                while(bytes[index] != 32 && bytes[index] != 0) 
-                {
-                    byteData.Add(bytes[index]);
-                    index++;
-
-                    
-                    if (bytes[index] == 32)
-                    {
-                        byteData.Add(bytes[index]);
-                        
-                        // if the byte was space check to see if theres data immediately after
-                        // so that they can be grouped together
-                        if (index + 1 < bytes.Length && bytes[index + 1] != 32)
-                        {
-                            index++;
-                        }
-                    }
-                }
-
-                if (byteData.Count <= 0) 
-                    continue;
-                
-                viableBytes.Add(byteData.ToArray());
-                byteData.Clear();
+                viableBytes.Add(displayBytes);
+                rowValues.Add(row);
             }
-            else
-            {
-                index++;
-            }
+            
+            displayBytes = byteReader.ReadDisplaySequence();
+
+            if (displayBytes.Length != 0) 
+                continue;
+            
+            var spaces = byteReader.ReadWhitespace();
+            if (spaces > 1)
+                row++;
         }
-        
+
+        var index = 0;
         foreach (var viableByteCollection in viableBytes) 
         {
             var isBlinking = false;
@@ -84,17 +67,19 @@ public class Display
             }
 
             var content = UTF8.GetString(viableByteCollection);
+            content = content.Replace("B0", "°");
             
             DisplaySections.Add(new DisplaySection
             {
                 Content = content,
-                Blinking = !content.Contains(':') && isBlinking
+                Blinking = !content.Contains(':') && isBlinking,
+                DisplayRow = rowValues[index++]
             });
         }
     }
 
     public override string ToString()
     {
-        return $"{nameof(DisplaySections)}: {JsonSerializer.Serialize(DisplaySections)}";
+        return JsonSerializer.Serialize(DisplaySections);
     }
 }

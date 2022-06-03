@@ -2,7 +2,7 @@
     <PropertyGroup>
         <TargetFramework>net6.0</TargetFramework>
         <Nullable>enable</Nullable>
-        <PackageVersion>0.0.6</PackageVersion>
+        <PackageVersion>0.0.8</PackageVersion>
         <Title>AquaLogicSharp</Title>
         <Authors>Bryce Callender</Authors>
         <Description>Converted python library to C#. This targets an aqualogic ps-4 device. Credit to swilson (https://github.com/swilson/aqualogic/tree/master/aqualogic) for writing this library in the first place.</Description>

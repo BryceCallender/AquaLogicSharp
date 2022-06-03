@@ -1,3 +1,4 @@
+using System;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 
@@ -33,6 +34,7 @@ public class SocketDataSource : IDataSource
     public void Disconnect()
     {
         _socket!.Disconnect(true);
+        _socket.Close();
     }
     
     public byte Read()
