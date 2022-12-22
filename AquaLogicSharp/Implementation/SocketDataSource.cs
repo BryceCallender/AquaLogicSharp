@@ -33,8 +33,8 @@ public class SocketDataSource : IDataSource
 
     public void Disconnect()
     {
-        _socket!.Disconnect(true);
-        _socket.Close();
+        _socket?.Disconnect(false);
+        _socket?.Close();
     }
     
     public byte Read()

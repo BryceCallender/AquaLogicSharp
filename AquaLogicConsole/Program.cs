@@ -1,4 +1,5 @@
 ﻿using System.ComponentModel;
+using System.Text.Json;
 using AquaLogicSharp;
 using AquaLogicSharp.Implementation;
 using AquaLogicSharp.Models;
@@ -10,12 +11,12 @@ void DataChanged(AquaLogic aquaLogic)
     {
         var name = descriptor.Name;
         var value = descriptor.GetValue(aquaLogic);
-        //Console.WriteLine("{0} = {1}", name, value);
+        //Console.WriteLine("{0} = {1}", name, JsonSerializer.Serialize(value));
     }
 }
 
 var aquaLogic = new AquaLogic();
-var dataSource = new SocketDataSource("192.168.86.247", 8899);
+var dataSource = new SocketDataSource("192.168.86.247", 8899); // USR-W610
 await aquaLogic.Connect(dataSource);
 Console.WriteLine("Connected!");
 Console.WriteLine("To toggle a state, type in the State name, e.g. LIGHTS");

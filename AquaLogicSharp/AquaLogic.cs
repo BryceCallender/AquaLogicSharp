@@ -23,6 +23,8 @@ namespace AquaLogicSharp
         public List<Variance> Variances { get; set; }
 
         public Display Display { get; set; }
+
+        public bool AttemptingRequest { get; set; }
         
         public State PoolStates { get; set; }
         public State FlashingStates { get; set; }
@@ -49,6 +51,8 @@ namespace AquaLogicSharp
 
         public bool MenuLocked { get; set; }
         
+        private Action<AquaLogic> Callback { get; set; }
+        
         #region Frame constants
         private const int FRAME_DLE = 0x10;
         private const int FRAME_STX = 0x02;
@@ -68,8 +72,8 @@ namespace AquaLogicSharp
         private byte[] FRAME_TYPE_LEDS = { 0x01, 0x02 };
         private byte[] FRAME_TYPE_DISPLAY_UPDATE = { 0x01, 0x03 };
         private byte[] FRAME_TYPE_LONG_DISPLAY_UPDATE = { 0x04, 0x0a };
-        private byte[] FRAME_TYPE_PUMP_SPEED_REQUEST = { 0x0c, 0x01 };
-        private byte[] FRAME_TYPE_PUMP_STATUS = { 0x00, 0x0c };
+        private byte[] FRAME_TYPE_PUMP_SPEED_REQUEST = { 0x0C, 0x01 };
+        private byte[] FRAME_TYPE_PUMP_STATUS = { 0x00, 0x0C };
         #endregion
 
         public AquaLogic()
@@ -114,9 +118,14 @@ namespace AquaLogicSharp
                         _logger.Information("Requeue...");
                         SendQueue.Enqueue(data);
                     }
+                    else
+                    {
+                        AlertAttemptingRequest(false); // attempted as many as it could
+                    }
                 }
                 else
                 {
+                    AlertAttemptingRequest(false);
                     _logger.Information("state changed successfully");
                 }
             }
@@ -129,7 +138,11 @@ namespace AquaLogicSharp
             
             var data = SendQueue.Dequeue();
             
-            //_dataSource.Write(data.Frame ?? Array.Empty<byte>());
+            if (!AttemptingRequest)
+            {
+                AlertAttemptingRequest(true);
+            }
+            
             await SendBurst(data.Frame ?? Array.Empty<byte>());
             _logger.Information("Sent Frame: {Frame}", data.Frame?.Hexlify());
         
@@ -142,15 +155,17 @@ namespace AquaLogicSharp
         private async Task SendBurst(byte[] frame)
         {
             _logger.Information("Performing a burst write for frame... {Frame}", frame.Hexlify());
-            foreach (var _ in Enumerable.Range(1,5))
+            foreach (var _ in Enumerable.Range(1, 20))
             {
                 _dataSource.Write(frame);
-                await Task.Delay(8);
+                //_logger.Information("Wrote frame at... {Time}", DateTime.Now.TimeOfDay);
+                await Task.Delay(10);
             }
         }
         
         public async Task Process(Action<AquaLogic> callback)
         {
+            Callback = callback;
             try
             {
                 while (_dataSource.ContinueReading)
@@ -173,7 +188,7 @@ namespace AquaLogicSharp
                     var frameType = frame[..2];
                     frame = frame[2..];
                     
-                    await HandleFrames(frameType, frame, callback);
+                    await HandleFrames(frameType, frame);
                 }
             }
             catch(Exception ex)
@@ -231,11 +246,11 @@ namespace AquaLogicSharp
             return frameData;
         }
 
-        private async Task HandleFrames(byte[] frameType, byte[] frame, Action<AquaLogic> dataChangedCallback)
+        private async Task HandleFrames(byte[] frameType, byte[] frame)
         {
             if (frameType.SequenceEqual(FRAME_TYPE_KEEP_ALIVE))
             {
-                //_logger.Information("Keep Alive: {Time}", DateTime.Now.TimeOfDay);
+                //_logger.Debug("Keep Alive: {Time}", DateTime.Now.TimeOfDay);
                 
                 if (SendQueue.Count > 0)
                     await SendFrame();
@@ -268,15 +283,15 @@ namespace AquaLogicSharp
                     AddVariance(nameof(FlashingStates), FlashingStates, states);
                     PoolStates = states;
                     FlashingStates = flashingStates;
-                    CallbackAndClearVariances(dataChangedCallback);
+                    CallbackAndClearVariances();
                 }
             }
             else if (frameType.SequenceEqual(FRAME_TYPE_PUMP_SPEED_REQUEST))
             {
-                var value = frame[..2].ToArray().FromBytes(ByteOrder.BigEndian);
+                var value = frame[..2].FromBytes(ByteOrder.BigEndian);
                 _logger.Debug("Pump speed request: {Value}", value);
 
-                PumpSpeed = CompareAndCallback(nameof(PumpSpeed), PumpSpeed, value, dataChangedCallback);
+                PumpSpeed = CompareAndCallback(nameof(PumpSpeed), PumpSpeed, value);
             }
             else if (frameType.SequenceEqual(FRAME_TYPE_PUMP_STATUS) && frame.Length >= 5)
             {
@@ -288,7 +303,7 @@ namespace AquaLogicSharp
                      (((frame[4] & 0x0f))));
 
                 _logger.Debug("Pump speed: {Speed}, power: {Power} watts", speed, power);
-                PumpPower = CompareAndCallback(nameof(PumpPower), PumpPower, power, dataChangedCallback);
+                PumpPower = CompareAndCallback(nameof(PumpPower), PumpPower, power);
             }
             else if (frameType.SequenceEqual(FRAME_TYPE_DISPLAY_UPDATE))
             {
@@ -308,8 +323,6 @@ namespace AquaLogicSharp
                 Display.Parse(frame);
                 var parts = Display.DisplaySections.Select(d => d.Content).ToArray();
 
-                _logger.Debug("Display update: {Parts}", parts);
-
                 try
                 {
                     switch (parts[1])
@@ -320,11 +333,11 @@ namespace AquaLogicSharp
 
                             switch (parts[0])
                             {
-                                case "Pool": PoolTemp = CompareAndCallback(nameof(PoolTemp), PoolTemp, value, dataChangedCallback);
+                                case "Pool": PoolTemp = CompareAndCallback(nameof(PoolTemp), PoolTemp, value);
                                     break;
-                                case "Spa": SpaTemp = CompareAndCallback(nameof(SpaTemp), SpaTemp, value, dataChangedCallback);
+                                case "Spa": SpaTemp = CompareAndCallback(nameof(SpaTemp), SpaTemp, value);
                                     break;
-                                case "Air": AirTemp = CompareAndCallback(nameof(AirTemp), AirTemp, value, dataChangedCallback);
+                                case "Air": AirTemp = CompareAndCallback(nameof(AirTemp), AirTemp, value);
                                     break;
                             }
                             
@@ -338,9 +351,9 @@ namespace AquaLogicSharp
                         
                             switch (parts[0])
                             {
-                                case "Pool": PoolChlorinatorPercent = CompareAndCallback(nameof(PoolChlorinatorPercent), PoolChlorinatorPercent, value, dataChangedCallback);
+                                case "Pool": PoolChlorinatorPercent = CompareAndCallback(nameof(PoolChlorinatorPercent), PoolChlorinatorPercent, value);
                                     break;
-                                case "Spa": SpaChlorinatorPercent = CompareAndCallback(nameof(SpaChlorinatorPercent), SpaChlorinatorPercent, value, dataChangedCallback);
+                                case "Spa": SpaChlorinatorPercent = CompareAndCallback(nameof(SpaChlorinatorPercent), SpaChlorinatorPercent, value);
                                     break;
                             }
                             
@@ -349,7 +362,7 @@ namespace AquaLogicSharp
                         case "Level" when parts[0] == "Salt":
                         {
                             var value = Math.Round(float.Parse(parts[2]), 1);
-                            SaltLevel = CompareAndCallback(nameof(SaltLevel), SaltLevel, value, dataChangedCallback);
+                            SaltLevel = CompareAndCallback(nameof(SaltLevel), SaltLevel, value);
                             IsMetric = parts[3] == "g/L";
 
                             break;
@@ -357,7 +370,7 @@ namespace AquaLogicSharp
                         case "System" when parts[0] == "Check":
                         {
                             var message = string.Join(" ", parts[2..]);
-                            CheckSystemMessage = CompareAndCallback(nameof(CheckSystemMessage), CheckSystemMessage, message, dataChangedCallback);
+                            CheckSystemMessage = CompareAndCallback(nameof(CheckSystemMessage), CheckSystemMessage, message);
                             break;
                         }
                     }
@@ -371,8 +384,13 @@ namespace AquaLogicSharp
                     {
                         MenuLocked = true;
                     }
-                
-                    DisplayUpdated(dataChangedCallback);
+
+                    if (Display.DisplayChanged)
+                    {
+                        _logger.Debug("Display update: {Parts}", parts);
+                        
+                        DisplayUpdated();
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -387,25 +405,23 @@ namespace AquaLogicSharp
             {
                 //_logger.Debug("Unknown frame: {Type}, {Frame}", frameType.Hexlify(), frame.Hexlify());
             }
-            
-            //_logger.Debug("Debug Frame: {Type}, {Frame}", frameType.Hexlify(), frame.Hexlify());
         }
 
 
-        private T CompareAndCallback<T>(string name, T? a, T b, Action<AquaLogic> callback)
+        private T CompareAndCallback<T>(string name, T? a, T b)
         {
             if (a?.Equals(b) ?? false)
                 return a;
             
             AddVariance(name, a,b);
-            CallbackAndClearVariances(callback);
+            CallbackAndClearVariances();
             return b;
         }
 
-        private void DisplayUpdated(Action<AquaLogic> callback)
+        private void DisplayUpdated()
         {
             Variances.Add(new Variance { Prop = "Display" });
-            CallbackAndClearVariances(callback);
+            CallbackAndClearVariances();
         }
 
         private void AddVariance(string name, object? before, object? after)
@@ -418,16 +434,16 @@ namespace AquaLogicSharp
             });
         }
 
-        private void CallbackAndClearVariances(Action<AquaLogic> callback)
+        private void CallbackAndClearVariances()
         {
-            callback(this);
+            Callback(this);
             
             JsonSerializerOptions options = new()
             {
                 DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
             };
             
-            _logger.Information("{Variances}", JsonSerializer.Serialize(Variances, options));
+            _logger.Debug("{Variances}", JsonSerializer.Serialize(Variances, options));
             Variances.Clear();
         }
         
@@ -568,10 +584,24 @@ namespace AquaLogicSharp
             return true;
         }
 
+        private void AlertAttemptingRequest(bool isAttempting)
+        {
+            _logger.Information("IsAttempting Request: {IsAttempting}", isAttempting);
+            AttemptingRequest = isAttempting;
+            Callback(this);
+        }
+
         public bool EnableMultiSpeedPump(bool enable)
         {
             MultiSpeedPump = enable;
             return true;
+        }
+
+        public void ResetSpa()
+        {
+            AddVariance(nameof(SpaTemp), SpaTemp, null);
+            SpaTemp = null;
+            Callback(this);
         }
     }
 }
