@@ -3,6 +3,7 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Linq;
 using AquaLogicSharp.Models;
+using EnumsNET;
 
 namespace AquaLogicSharp
 {
@@ -35,6 +36,14 @@ namespace AquaLogicSharp
         public static bool Is(this State state, State matchState)
         {
             return state == matchState;
+        }
+        
+        public static string[] ToStateArray(this State state) 
+        {
+            return state.ToString()
+                .Split(new string[] { ", " }, StringSplitOptions.None)
+                .Select(i => Enum.Parse<State>(i).GetName()!)
+                .ToArray();
         }
     }
 }

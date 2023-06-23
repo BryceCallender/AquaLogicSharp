@@ -25,9 +25,12 @@ namespace AquaLogicSharp
         public Display Display { get; set; }
 
         public bool AttemptingRequest { get; set; }
+
+        public string[] PoolStates => _poolStates.ToStateArray();
+        private State _poolStates { get; set; }
         
-        public State PoolStates { get; set; }
-        public State FlashingStates { get; set; }
+        public string[] FlashingStates => _flashingStates.ToStateArray();
+        private State _flashingStates { get; set; }
 
         public bool IsMetric { get; private set; }
         public int? AirTemp { get; private set; }
@@ -80,8 +83,8 @@ namespace AquaLogicSharp
         {
             SendQueue = new Queue<AquaLogicQueueInfo>();
             Variances = new List<Variance>();
-            PoolStates = State.EMPTY;
-            FlashingStates = State.EMPTY;
+            _poolStates = State.EMPTY;
+            _flashingStates = State.EMPTY;
             Display = new Display();
 
             _logger = new LoggerConfiguration()
@@ -277,12 +280,12 @@ namespace AquaLogicSharp
                     states |= State.HEATER_AUTO_MODE;
 
                 // Left this one to avoid dual callbacks
-                if (states != PoolStates || flashingStates != FlashingStates)
+                if (states != _poolStates || flashingStates != _flashingStates)
                 {
-                    AddVariance(nameof(PoolStates), PoolStates, states);
-                    AddVariance(nameof(FlashingStates), FlashingStates, states);
-                    PoolStates = states;
-                    FlashingStates = flashingStates;
+                    AddVariance(nameof(_poolStates), _poolStates, states);
+                    AddVariance(nameof(_flashingStates), _flashingStates, states);
+                    _poolStates = states;
+                    _flashingStates = flashingStates;
                     CallbackAndClearVariances();
                 }
             }
@@ -501,9 +504,9 @@ namespace AquaLogicSharp
 
         public List<State> GetStates()
         {
-            var stateList = Enums.GetValues<State>().Where(value => PoolStates.HasFlag(value)).ToList();
+            var stateList = Enums.GetValues<State>().Where(value => _poolStates.HasFlag(value)).ToList();
 
-            if (FlashingStates.HasFlag(State.FILTER))
+            if (_flashingStates.HasFlag(State.FILTER))
                 stateList.Add(State.FILTER_LOW_SPEED);
 
             return stateList;
@@ -522,7 +525,7 @@ namespace AquaLogicSharp
                 }
             }
 
-            return state.Is(State.FILTER_LOW_SPEED) ? FlashingStates.HasFlag(State.FILTER) : PoolStates.HasFlag(state);
+            return state.Is(State.FILTER_LOW_SPEED) ? _flashingStates.HasFlag(State.FILTER) : _poolStates.HasFlag(state);
         }
 
         public bool SetState(State state, bool enable)
