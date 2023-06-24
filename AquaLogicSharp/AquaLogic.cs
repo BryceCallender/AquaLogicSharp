@@ -26,10 +26,10 @@ namespace AquaLogicSharp
 
         public bool AttemptingRequest { get; set; }
 
-        public string[] PoolStates => _poolStates.ToStateArray();
+        public string[]? PoolStates => _poolStates.ToStateArray();
         private State _poolStates { get; set; }
         
-        public string[] FlashingStates => _flashingStates.ToStateArray();
+        public string[]? FlashingStates => _flashingStates.ToStateArray();
         private State _flashingStates { get; set; }
 
         public bool IsMetric { get; private set; }

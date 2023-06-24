@@ -38,8 +38,11 @@ namespace AquaLogicSharp
             return state == matchState;
         }
         
-        public static string[] ToStateArray(this State state) 
+        public static string[]? ToStateArray(this State state)
         {
+            if (state == State.EMPTY)
+                return default;
+            
             return state.ToString()
                 .Split(new string[] { ", " }, StringSplitOptions.None)
                 .Select(i => Enum.Parse<State>(i).GetName()!)
