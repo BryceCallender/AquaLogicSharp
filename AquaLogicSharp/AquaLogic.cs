@@ -324,7 +324,7 @@ namespace AquaLogicSharp
                 frame = utf8Frame.ToArray();
                 
                 Display.Parse(frame);
-                var parts = Display.DisplaySections.Select(d => d.Content).ToArray();
+                var parts = Display.DisplaySections.SelectMany(d => d.Select(c => c.Content)).ToArray();
 
                 try
                 {
@@ -397,7 +397,7 @@ namespace AquaLogicSharp
                 }
                 catch (Exception ex)
                 {
-                    _logger.Error(ex.Message);
+                    _logger.Error("{Message}", ex.Message);
                 }
             }
             else if (frameType == FRAME_TYPE_LONG_DISPLAY_UPDATE)

@@ -97,25 +97,28 @@ namespace AquaLogicTest
             
             display.Parse(bytes);
 
-            var expected = new List<DisplaySection>
+            var expected = new List<List<DisplaySection>>
             {
-                new()
+                new ()
                 {
-                    Content = "Air",
-                    Blinking = false,
-                    DisplayRow = 1
+                    new DisplaySection
+                    {
+                        Content = "Air",
+                        Blinking = false,
+                    },
+                    new DisplaySection
+                    {
+                        Content = "Temp",
+                        Blinking = false
+                    }
                 },
-                new()
+                new ()
                 {
-                    Content = "Temp",
-                    Blinking = false,
-                    DisplayRow = 1
-                },
-                new()
-                {
-                    Content = "84_F",
-                    Blinking = false,
-                    DisplayRow = 2
+                    new DisplaySection
+                    {
+                        Content = "84_F",
+                        Blinking = false
+                    }
                 }
             };
             

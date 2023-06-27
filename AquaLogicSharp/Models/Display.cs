@@ -8,7 +8,7 @@ namespace AquaLogicSharp.Models;
 
 public class Display
 {
-    public List<DisplaySection> DisplaySections { get; }
+    public List<List<DisplaySection>> DisplaySections { get; }
     public bool DisplayChanged { get; set; }
 
     private byte[] _displayData;
@@ -17,7 +17,7 @@ public class Display
 
     public Display()
     {
-        DisplaySections = new List<DisplaySection>();
+        DisplaySections = new List<List<DisplaySection>>();
         _displayData = Array.Empty<byte>();
     }
 
@@ -37,11 +37,8 @@ public class Display
         DisplaySections.Clear();
 
         var byteReader = new ByteReader(bytes);
-        var viableBytes = new List<byte[]>();
-        var rowValues = new List<int>();
+        var displaySections = new List<DisplaySection>();
         
-        var row = 1;
-
         // Get past spaces if in front
         byteReader.ReadWhitespace();
 
@@ -50,8 +47,31 @@ public class Display
         {
             if (displayBytes.Length > 0)
             {
-                viableBytes.Add(displayBytes);
-                rowValues.Add(row);
+                var (content, isBlinking) = ParseUtf8Bytes(displayBytes);
+                
+                if (content.Contains(':'))
+                {
+                    var parts = content.Split(':');
+
+                    displaySections.AddRange(parts.Select(part => new DisplaySection
+                    {
+                        Content = part, Blinking = false
+                    }));
+
+                    displaySections.Insert(DisplaySections.Count - 1, new DisplaySection
+                    {
+                        Content = ":",
+                        Blinking = true
+                    });
+                
+                    continue;
+                }
+                
+                displaySections.Add(new DisplaySection
+                {
+                    Content = content,
+                    Blinking = isBlinking
+                });
             }
             
             displayBytes = byteReader.ReadDisplaySequence();
@@ -60,59 +80,30 @@ public class Display
                 continue;
             
             var spaces = byteReader.ReadWhitespace();
-            if (spaces > 1)
-                row++;
-        }
-
-        var index = 0;
-        foreach (var viableByteCollection in viableBytes) 
-        {
-            var isBlinking = false;
-            for (var i = 0; i < viableByteCollection.Length; i++)
-            {
-                var @byte = viableByteCollection[i];
-
-                if ((@byte & BlinkingFlag) != BlinkingFlag) 
-                    continue;
-                
-                viableByteCollection[i] = (byte)(@byte & ~BlinkingFlag);
-                isBlinking = true;
-            }
-
-            var content = UTF8.GetString(viableByteCollection);
-            content = content.Replace("B0", "°");
-
-            if (content.Contains(':'))
-            {
-                var parts = content.Split(':');
-
-                foreach (var part in parts)
-                {
-                    DisplaySections.Add(new DisplaySection
-                    {
-                        Content = part,
-                        Blinking = false,
-                        DisplayRow = rowValues[index]
-                    });
-                }
-                
-                DisplaySections.Insert(DisplaySections.Count - 1, new DisplaySection
-                {
-                    Content = ":",
-                    Blinking = true,
-                    DisplayRow = rowValues[index]
-                });
-                
+            if (spaces <= 1) 
                 continue;
-            }
             
-            DisplaySections.Add(new DisplaySection
-            {
-                Content = content,
-                Blinking =  isBlinking,
-                DisplayRow = rowValues[index++]
-            });
+            DisplaySections.Add(displaySections);
+            displaySections = new List<DisplaySection>();
         }
+    }
+
+    private (string, bool) ParseUtf8Bytes(byte[] displayBytes)
+    {
+        var isBlinking = false;
+        for (var i = 0; i < displayBytes.Length; i++)
+        {
+            var @byte = displayBytes[i];
+
+            if ((@byte & BlinkingFlag) != BlinkingFlag) 
+                continue;
+                
+            displayBytes[i] = (byte)(@byte & ~BlinkingFlag);
+            isBlinking = true;
+        }
+                
+        var content = UTF8.GetString(displayBytes);
+        return (content.Replace("B0", "°"), isBlinking);
     }
 
     public override string ToString()
