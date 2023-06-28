@@ -55,23 +55,24 @@ public class Display
 
                     displaySections.AddRange(parts.Select(part => new DisplaySection
                     {
-                        Content = part, Blinking = false
+                        Content = part, 
+                        Blinking = false
                     }));
 
-                    displaySections.Insert(DisplaySections.Count - 1, new DisplaySection
+                    displaySections.Insert(displaySections.Count - 1, new DisplaySection
                     {
                         Content = ":",
                         Blinking = true
                     });
-                
-                    continue;
                 }
-                
-                displaySections.Add(new DisplaySection
+                else
                 {
-                    Content = content,
-                    Blinking = isBlinking
-                });
+                    displaySections.Add(new DisplaySection
+                    {
+                        Content = content,
+                        Blinking = isBlinking
+                    }); 
+                }
             }
             
             displayBytes = byteReader.ReadDisplaySequence();
