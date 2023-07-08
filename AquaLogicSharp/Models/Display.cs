@@ -13,7 +13,7 @@ public class Display
 
     private byte[] _displayData;
 
-    private const int BlinkingFlag = 1 << 7;        
+    private const int BlinkingFlag = 1 << 8;        
 
     public Display()
     {
@@ -26,7 +26,7 @@ public class Display
         if (bytes[^1] != 0x0)
             return;
 
-        if (_displayData.SequenceEqual(bytes))
+        if (_displayData.SequenceEqual(bytes) || CompareByteArrays(_displayData, bytes) == 1)
         {
             DisplayChanged = false;
             return;
@@ -48,14 +48,14 @@ public class Display
             if (displayBytes.Length > 0)
             {
                 var (content, isBlinking) = ParseUtf8Bytes(displayBytes);
-                
+
                 if (content.Contains(':'))
                 {
                     var parts = content.Split(':');
 
                     displaySections.AddRange(parts.Select(part => new DisplaySection
                     {
-                        Content = part, 
+                        Content = part,
                         Blinking = false
                     }));
 
@@ -87,6 +87,16 @@ public class Display
             DisplaySections.Add(displaySections);
             displaySections = new List<DisplaySection>();
         }
+    }
+    
+    public int CompareByteArrays(byte[] oldData, byte[] newData)
+    {
+        if (oldData.Length != newData.Length)
+        {
+            return -1;
+        }
+
+        return newData.Where((t, i) => oldData[i] != t).Count();
     }
 
     private (string, bool) ParseUtf8Bytes(byte[] displayBytes)

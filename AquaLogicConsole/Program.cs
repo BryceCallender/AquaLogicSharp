@@ -11,7 +11,7 @@ void DataChanged(AquaLogic aquaLogic)
     {
         var name = descriptor.Name;
         var value = descriptor.GetValue(aquaLogic);
-        Console.WriteLine("{0} = {1}", name, JsonSerializer.Serialize(value));
+        //Console.WriteLine("{0} = {1}", name, JsonSerializer.Serialize(value));
     }
 }
 

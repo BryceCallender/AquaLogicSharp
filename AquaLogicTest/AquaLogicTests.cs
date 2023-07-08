@@ -125,6 +125,48 @@ namespace AquaLogicTest
             Assert.Equal(expected, display.DisplaySections);
         }
 
+        [Theory] 
+        [InlineData(new byte[] { 32, 32, 32, 32, 32, 32, 84, 117, 101, 115, 100, 97, 121, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 49, 48, 58, 48, 52, 80, 32, 32, 32, 32, 32, 32, 32, 0 })]
+        public void TestBlinkingTime(byte[] bytes)
+        {
+            //Tuesday 10:04P
+            var display = new Display();
+            
+            display.Parse(bytes);
+
+            var expected = new List<List<DisplaySection>>
+            {
+                new ()
+                {
+                    new DisplaySection
+                    {
+                        Content = "Tuesday",
+                        Blinking = false,
+                    }
+                },
+                new ()
+                {
+                    new DisplaySection
+                    {
+                        Content = "10",
+                        Blinking = false
+                    },
+                    new DisplaySection
+                    {
+                        Content = ":",
+                        Blinking = true
+                    },
+                    new DisplaySection
+                    {
+                        Content = "04P",
+                        Blinking = false
+                    }
+                }
+            };
+            
+            Assert.Equal(expected, display.DisplaySections);
+        }
+        
         private static void DataChanged(AquaLogic aquaLogic)
         {
 

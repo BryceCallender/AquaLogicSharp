@@ -326,6 +326,18 @@ namespace AquaLogicSharp
                 Display.Parse(frame);
                 var parts = Display.DisplaySections.SelectMany(d => d.Select(c => c.Content)).ToArray();
 
+                // If we do not have pool on and theres a temp, nuke it
+                if (!_poolStates.HasFlag(State.POOL) && PoolTemp.HasValue)
+                {
+                    PoolTemp = CompareAndCallback(nameof(PoolTemp), PoolTemp, null);
+                }
+                    
+                // If we do not have spa on and theres a temp, nuke it
+                if (!_poolStates.HasFlag(State.SPA) && SpaTemp.HasValue)
+                {
+                    SpaTemp = CompareAndCallback(nameof(SpaTemp), SpaTemp, null);
+                }
+                
                 try
                 {
                     switch (parts[1])
@@ -598,13 +610,6 @@ namespace AquaLogicSharp
         {
             MultiSpeedPump = enable;
             return true;
-        }
-
-        public void ResetSpa()
-        {
-            AddVariance(nameof(SpaTemp), SpaTemp, null);
-            SpaTemp = null;
-            Callback(this);
         }
     }
 }
