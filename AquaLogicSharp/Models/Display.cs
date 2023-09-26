@@ -13,7 +13,7 @@ public class Display
 
     private byte[] _displayData;
 
-    private const int BlinkingFlag = 1 << 8;        
+    private const int BlinkingFlag = 1 << 7;        
 
     public Display()
     {
@@ -114,7 +114,7 @@ public class Display
         }
                 
         var content = UTF8.GetString(displayBytes);
-        return (content.Replace("B0", "°"), isBlinking);
+        return (content.Replace("B0", "°").Replace("_", "°"), isBlinking);
     }
 
     public override string ToString()

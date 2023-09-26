@@ -2,20 +2,13 @@ using System.Collections.Generic;
 
 namespace AquaLogicSharp;
 
-public class ByteReader
+public class ByteReader(byte[] bytes)
 {
-    private byte[] _bytes;
-    private int _index;
+    private int _index = 0;
     private const byte EOF = 0;
     private const byte Space = 32;
 
-    public bool IsEoF => _bytes[_index] == EOF;
-
-    public ByteReader(byte[] bytes)
-    {
-        _bytes = bytes;
-        _index = 0;
-    }
+    public bool IsEoF => bytes[_index] == EOF;
 
     public int ReadWhitespace()
     {
@@ -54,7 +47,7 @@ public class ByteReader
 
     private byte ReadByte()
     {
-        return _index == _bytes.Length ? EOF : _bytes[_index];
+        return _index == bytes.Length ? EOF : bytes[_index];
     }
 
     private void Advance()

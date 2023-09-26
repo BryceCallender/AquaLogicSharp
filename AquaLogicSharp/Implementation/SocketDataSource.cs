@@ -4,21 +4,13 @@ using System.Threading.Tasks;
 
 namespace AquaLogicSharp.Implementation;
 
-public class SocketDataSource : IDataSource
+public class SocketDataSource(string host, int port) : IDataSource
 {
     private Socket? _socket;
-    private string _host;
-    private int _port;
-    
+
     private int READ_TIMEOUT_SECONDS = 5;
     
     public bool ContinueReading { get; set; } = true;
-
-    public SocketDataSource(string host, int port)
-    {
-        _host = host;
-        _port = port;
-    }
 
     public async Task Connect()
     {
@@ -27,7 +19,7 @@ public class SocketDataSource : IDataSource
             SocketType.Stream,
             ProtocolType.Tcp);
             
-        await _socket.ConnectAsync(_host, _port);
+        await _socket.ConnectAsync(host, port);
         _socket.ReceiveTimeout = READ_TIMEOUT_SECONDS * 1000;
     }
 

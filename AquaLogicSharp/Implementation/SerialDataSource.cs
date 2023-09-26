@@ -4,22 +4,16 @@ using System.Threading.Tasks;
 
 namespace AquaLogicSharp.Implementation;
 
-public class SerialDataSource : IDataSource
+public class SerialDataSource(string serialPortName) : IDataSource
 {
     private SerialPort? _serial;
-    private readonly string _serialPortName;
 
     public bool ContinueReading { get; set; } = true;
-
-    public SerialDataSource(string serialPortName)
-    {
-        _serialPortName = serialPortName;
-    }
 
     public Task Connect()
     {
         _serial = new SerialPort(
-            _serialPortName, 
+            serialPortName, 
             19200,
             Parity.None,
             8,

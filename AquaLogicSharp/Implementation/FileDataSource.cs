@@ -3,21 +3,15 @@ using System.Threading.Tasks;
 
 namespace AquaLogicSharp.Implementation;
 
-public class FileDataSource : IDataSource
+public class FileDataSource(string fileName) : IDataSource
 {
     private FileStream? _fileStream;
-    private string _fileName;
 
     public bool ContinueReading { get; set; } = true;
 
-    public FileDataSource(string fileName)
-    {
-        _fileName = fileName;
-    }
-
     public Task Connect()
     {
-        _fileStream = File.Open(_fileName, FileMode.Open);
+        _fileStream = File.Open(fileName, FileMode.Open);
         return Task.CompletedTask;
     }
 

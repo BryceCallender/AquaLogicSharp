@@ -14,23 +14,28 @@ namespace AquaLogicSharp
 {
     public class AquaLogic
     {
-        private IDataSource _dataSource;
-        private Timer? _timer;
-        private readonly Logger _logger;
+        private IDataSource _dataSource = null!;
         
-        private Queue<AquaLogicQueueInfo> SendQueue { get; }
+        private Timer? _timer;
+        
+        private readonly Logger _logger = new LoggerConfiguration()
+            .WriteTo.Console()
+            .MinimumLevel.Debug()
+            .CreateLogger();
+        
+        private Queue<AquaLogicQueueInfo> SendQueue { get; } = new();
 
-        public List<Variance> Variances { get; set; }
+        public List<Variance> Variances { get; set; } = new();
 
-        public Display Display { get; set; }
+        public Display Display { get; set; } = new();
 
         public bool AttemptingRequest { get; set; }
 
         public string[]? PoolStates => _poolStates.ToStateArray();
-        private State _poolStates { get; set; }
-        
+        private State _poolStates { get; set; } = State.EMPTY;
+
         public string[]? FlashingStates => _flashingStates.ToStateArray();
-        private State _flashingStates { get; set; }
+        private State _flashingStates { get; set; } = State.EMPTY;
 
         public bool IsMetric { get; private set; }
         public int? AirTemp { get; private set; }
@@ -41,8 +46,8 @@ namespace AquaLogicSharp
         public double? SpaChlorinatorPercent { get; private set; }
         public double? SaltLevel { get; private set; }
 
-        private string CheckSystemMessage { get; set; }
-        public string Status => GetState(State.CHECK_SYSTEM) ? CheckSystemMessage : "Ok";
+        private string? CheckSystemMessage { get; set; }
+        public string? Status => GetState(State.CHECK_SYSTEM) ? CheckSystemMessage : "Ok";
         public bool? IsHeaterEnabled => GetState(State.HEATER_1);
         public bool? IsSuperChlorinate => GetState(State.SUPER_CHLORINATE);
         public bool? Waterfall => GetState(State.AUX_2); //Waterfall is aux2
@@ -53,8 +58,8 @@ namespace AquaLogicSharp
         public bool HeaterAutoMode { get; set; } = true;
 
         public bool MenuLocked { get; set; }
-        
-        private Action<AquaLogic> Callback { get; set; }
+
+        private Action<AquaLogic> Callback { get; set; } = null!;
         
         #region Frame constants
         private const int FRAME_DLE = 0x10;
@@ -78,20 +83,6 @@ namespace AquaLogicSharp
         private byte[] FRAME_TYPE_PUMP_SPEED_REQUEST = { 0x0C, 0x01 };
         private byte[] FRAME_TYPE_PUMP_STATUS = { 0x00, 0x0C };
         #endregion
-
-        public AquaLogic()
-        {
-            SendQueue = new Queue<AquaLogicQueueInfo>();
-            Variances = new List<Variance>();
-            _poolStates = State.EMPTY;
-            _flashingStates = State.EMPTY;
-            Display = new Display();
-
-            _logger = new LoggerConfiguration()
-                .WriteTo.Console()
-                .MinimumLevel.Debug()
-                .CreateLogger();
-        }
 
         public async Task Connect(IDataSource dataSource)
         {
@@ -196,7 +187,7 @@ namespace AquaLogicSharp
             }
             catch(Exception ex)
             {
-                _logger.Error(ex.Message);
+                _logger.Error("{Error}", ex.Message);
             }
         }
         
@@ -236,10 +227,14 @@ namespace AquaLogicSharp
                 {
                     var nextByte = _dataSource.Read();
                     if (nextByte == FRAME_ETX)
+                    {
                         break;
+                    }
 
                     if (nextByte != 0)
+                    {
                         _logger.Error("Frame ETX ({Etx}) must come after DLE ({Dle})", FRAME_ETX, FRAME_DLE);
+                    }
                 }
 
                 frameData.Add(byteRead);
@@ -329,13 +324,23 @@ namespace AquaLogicSharp
                 // If we do not have pool on and theres a temp, nuke it
                 if (!_poolStates.HasFlag(State.POOL) && PoolTemp.HasValue)
                 {
-                    PoolTemp = CompareAndCallback(nameof(PoolTemp), PoolTemp, null);
+                    AddVariance(nameof(PoolTemp), PoolTemp, null);
+                    PoolTemp = null;
+
+                    AddVariance(nameof(PoolChlorinatorPercent), PoolChlorinatorPercent, null);
+                    PoolChlorinatorPercent = null;
+                    CallbackAndClearVariances();
                 }
                     
                 // If we do not have spa on and theres a temp, nuke it
                 if (!_poolStates.HasFlag(State.SPA) && SpaTemp.HasValue)
                 {
-                    SpaTemp = CompareAndCallback(nameof(SpaTemp), SpaTemp, null);
+                    AddVariance(nameof(SpaTemp), SpaTemp, null);
+                    SpaTemp = null;
+                    
+                    AddVariance(nameof(SpaChlorinatorPercent), SpaChlorinatorPercent, null);
+                    SpaChlorinatorPercent = null;
+                    CallbackAndClearVariances();
                 }
                 
                 try
