@@ -27,8 +27,11 @@ public class FileDataSource(string fileName) : IDataSource
         
         var data = _fileStream.ReadByte();
         if (data == -1)
+        {
             ContinueReading = false;
-            
+            return 0x0;
+        }
+
         return (byte)data;
     }
 

@@ -31,8 +31,22 @@ public class SocketDataSource(string host, int port) : IDataSource
     
     public byte Read()
     {
+        if (_socket is null)
+        {
+            ContinueReading = false;
+            return 0x0;
+        }
+
         var bytes = new byte[1];
-        _socket?.Receive(bytes);
+
+        // A zero length receive means the peer closed the connection. Ignoring it left the
+        // read loop spinning on a stale byte forever.
+        if (_socket.Receive(bytes) == 0)
+        {
+            ContinueReading = false;
+            return 0x0;
+        }
+
         return bytes[0];
     }
 

@@ -15,22 +15,32 @@ void DataChanged(AquaLogic aquaLogic)
     }
 }
 
-var aquaLogic = new AquaLogic();
-var dataSource = new SocketDataSource("192.168.86.247", 8899); // USR-W610
+using var aquaLogic = new AquaLogic();
+var dataSource = new SocketDataSource("192.168.1.169", 8899); // USR-W610
 await aquaLogic.Connect(dataSource);
 Console.WriteLine("Connected!");
 Console.WriteLine("To toggle a state, type in the State name, e.g. LIGHTS");
-var thread = new Thread( () => aquaLogic.Process(DataChanged));
-thread.Start();
+
+using var cts = new CancellationTokenSource();
+Console.CancelKeyPress += (_, args) =>
+{
+    args.Cancel = true; // unwind through the finally instead of being killed
+    cts.Cancel();
+};
+
+// Keep the task so faults surface and shutdown can wait on it, rather than
+// handing it to a Thread that returns at the first await and drops it.
+var processTask = aquaLogic.Process(DataChanged, cts.Token);
 
 try
 {
-    while (true)
+    while (!cts.IsCancellationRequested)
     {
         var line = Console.ReadLine()?.ToUpper();
 
+        // null means stdin closed; continuing here just spun the CPU
         if (line is null)
-            continue;
+            break;
 
         // var result = Enums.TryParse(line, out Key key);
         //
@@ -51,7 +61,13 @@ try
         }
     }
 }
+catch (Exception ex)
+{
+    Console.Error.WriteLine(ex.Message);
+}
 finally
 {
-    dataSource.Disconnect();
+    cts.Cancel();
+    dataSource.Disconnect(); // unblocks the pending socket read
+    await processTask;
 }

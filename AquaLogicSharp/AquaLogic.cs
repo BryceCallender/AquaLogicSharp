@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -12,7 +13,7 @@ using AquaLogicSharp.Models;
 
 namespace AquaLogicSharp
 {
-    public class AquaLogic
+    public class AquaLogic : IDisposable
     {
         private IDataSource _dataSource = null!;
         
@@ -23,7 +24,9 @@ namespace AquaLogicSharp
             .MinimumLevel.Debug()
             .CreateLogger();
         
-        private Queue<AquaLogicQueueInfo> SendQueue { get; } = new();
+        // Producers (SendKey/SetState) run on the caller's thread and CheckState runs on a
+        // timer thread, while the read loop consumes. All three need a thread safe queue.
+        private ConcurrentQueue<AquaLogicQueueInfo> SendQueue { get; } = new();
 
         public List<Variance> Variances { get; set; } = new();
 
@@ -127,22 +130,25 @@ namespace AquaLogicSharp
 
         private async Task SendFrame()
         {
-            if (SendQueue.Count <= 0) 
+            if (!SendQueue.TryDequeue(out var data))
                 return;
-            
-            var data = SendQueue.Dequeue();
-            
+
             if (!AttemptingRequest)
             {
                 AlertAttemptingRequest(true);
             }
-            
+
             await SendBurst(data.Frame ?? Array.Empty<byte>());
             _logger.Information("Sent Frame: {Frame}", data.Frame?.Hexlify());
-        
+
             if (data.DesiredStates?.Length > 0)
             {
-                _timer = new Timer(CheckState, data, TimeSpan.FromSeconds(2), Timeout.InfiniteTimeSpan);
+                // Replace rather than leak the previous one-shot timer
+                var previous = Interlocked.Exchange(
+                    ref _timer,
+                    new Timer(CheckState, data, TimeSpan.FromSeconds(2), Timeout.InfiniteTimeSpan));
+
+                previous?.Dispose();
             }
         }
 
@@ -157,21 +163,32 @@ namespace AquaLogicSharp
             }
         }
         
-        public async Task Process(Action<AquaLogic> callback)
+        public async Task Process(Action<AquaLogic> callback, CancellationToken cancellationToken = default)
         {
             Callback = callback;
-            try
+
+            while (_dataSource.ContinueReading && !cancellationToken.IsCancellationRequested)
             {
-                while (_dataSource.ContinueReading)
+                // Scoped per frame: a malformed frame or a transient read error should cost
+                // us that frame, not the whole session.
+                try
                 {
-                    ReadUntilSTX();
-                    
+                    if (!ReadUntilSTX())
+                        continue;
+
                     var frame = ReadFrameData().ToArray();
+
+                    // Two bytes of frame type plus two of CRC is the smallest legal frame
+                    if (frame.Length < 4)
+                    {
+                        _logger.Warning("Runt frame of {Length} byte(s), discarding", frame.Length);
+                        continue;
+                    }
 
                     var frameCRC = frame[^2..].FromBytes(ByteOrder.BigEndian);
                     frame = frame[..^2];
 
-                    var calculatedCRC = frame.Aggregate(FRAME_DLE + FRAME_STX, (current, @byte) => current + @byte);
+                    var calculatedCRC = frame.Aggregate(FRAME_DLE + FRAME_STX, (current, @byte) => current + @byte) & 0xFFFF;
 
                     if (frameCRC != calculatedCRC)
                     {
@@ -181,39 +198,44 @@ namespace AquaLogicSharp
 
                     var frameType = frame[..2];
                     frame = frame[2..];
-                    
+
                     await HandleFrames(frameType, frame);
                 }
-            }
-            catch(Exception ex)
-            {
-                _logger.Error("{Error}", ex.Message);
+                catch (Exception ex)
+                {
+                    _logger.Error("{Error}", ex.Message);
+                }
             }
         }
-        
-        private void ReadUntilSTX()
+
+        /// <returns>true when an STX was found, false on timeout or a closed source.</returns>
+        private bool ReadUntilSTX()
         {
             var byteRead = 0;
             var frameRxTime = DateTime.Now;
-            
-            while (true)
+
+            while (_dataSource.ContinueReading)
             {
+                // TotalSeconds, not Seconds - the latter wraps at 60 and stops tripping
+                if ((DateTime.Now - frameRxTime).TotalSeconds > READ_TIMEOUT_SECONDS)
+                {
+                    _logger.Error("Frame timeout while waiting for STX");
+                    return false;
+                }
+
                 if (byteRead == FRAME_DLE)
                 {
-                    var nextByte = _dataSource.Read();
-                    if (nextByte == FRAME_STX)
-                    {
-                        break;
-                    }
-                            
+                    byteRead = _dataSource.Read();
+                    if (byteRead == FRAME_STX)
+                        return true;
+
                     continue;
                 }
 
                 byteRead = _dataSource.Read();
-                var elapsed = DateTime.Now - frameRxTime;
-                if (elapsed.Seconds > READ_TIMEOUT_SECONDS)
-                    return;
             }
+
+            return false;
         }
 
         private List<byte> ReadFrameData()
@@ -250,7 +272,7 @@ namespace AquaLogicSharp
             {
                 //_logger.Debug("Keep Alive: {Time}", DateTime.Now.TimeOfDay);
                 
-                if (SendQueue.Count > 0)
+                if (!SendQueue.IsEmpty)
                     await SendFrame();
             }
             else if(frameType.SequenceEqual(FRAME_TYPE_LOCAL_WIRED_KEY_EVENT))
@@ -265,11 +287,11 @@ namespace AquaLogicSharp
             {
                 _logger.Debug("Wireless Key: {Frame}", frame.Hexlify());
             }
-            else if (frameType.SequenceEqual(FRAME_TYPE_LEDS))
+            else if (frameType.SequenceEqual(FRAME_TYPE_LEDS) && frame.Length >= 8)
             {
                 var states = (State)frame[..4].FromBytes(ByteOrder.LittleEndian);
                 var flashingStates = (State)frame[4..8].FromBytes(ByteOrder.LittleEndian);
-                
+
                 states |= flashingStates;
                 if (HeaterAutoMode)
                     states |= State.HEATER_AUTO_MODE;
@@ -277,14 +299,18 @@ namespace AquaLogicSharp
                 // Left this one to avoid dual callbacks
                 if (states != _poolStates || flashingStates != _flashingStates)
                 {
-                    AddVariance(nameof(_poolStates), _poolStates, states);
-                    AddVariance(nameof(_flashingStates), _flashingStates, states);
+                    if (states != _poolStates)
+                        AddVariance(nameof(PoolStates), _poolStates, states);
+
+                    if (flashingStates != _flashingStates)
+                        AddVariance(nameof(FlashingStates), _flashingStates, flashingStates);
+
                     _poolStates = states;
                     _flashingStates = flashingStates;
                     CallbackAndClearVariances();
                 }
             }
-            else if (frameType.SequenceEqual(FRAME_TYPE_PUMP_SPEED_REQUEST))
+            else if (frameType.SequenceEqual(FRAME_TYPE_PUMP_SPEED_REQUEST) && frame.Length >= 2)
             {
                 var value = frame[..2].FromBytes(ByteOrder.BigEndian);
                 _logger.Debug("Pump speed request: {Value}", value);
@@ -305,19 +331,8 @@ namespace AquaLogicSharp
             }
             else if (frameType.SequenceEqual(FRAME_TYPE_DISPLAY_UPDATE))
             {
-                var utf8Frame = frame.ToList();
-                // Convert LCD-specific degree symbol and decode to utf-8
-                for(var i = 0; i < utf8Frame.Count; i++)
-                {
-                    if (utf8Frame[i] == 0xDF)
-                    {
-                        utf8Frame[i] = 0xC2;
-                        utf8Frame.Insert(i + 1, 0xB0);
-                    }
-                }
-
-                frame = utf8Frame.ToArray();
-                
+                // The degree glyph (0xDF) is translated by the display parser itself, after
+                // it has cleared the blink bit. Rewriting it to UTF-8 here would get mangled.
                 Display.Parse(frame);
                 var parts = Display.DisplaySections.SelectMany(d => d.Select(c => c.Content)).ToArray();
 
@@ -345,70 +360,70 @@ namespace AquaLogicSharp
                 
                 try
                 {
-                    switch (parts[1])
+                    // parts comes straight off the wire, so every index below is length checked
+                    // rather than relying on the catch to swallow a malformed display.
+                    if (parts.Length >= 3)
                     {
-                        case "Temp":
+                        switch (parts[1])
                         {
-                            var value = int.Parse(parts[2][..^2]);
-
-                            switch (parts[0])
+                            case "Temp" when parts[2].Length >= 2 && int.TryParse(parts[2][..^2], out var temp):
                             {
-                                case "Pool": PoolTemp = CompareAndCallback(nameof(PoolTemp), PoolTemp, value);
-                                    break;
-                                case "Spa": SpaTemp = CompareAndCallback(nameof(SpaTemp), SpaTemp, value);
-                                    break;
-                                case "Air": AirTemp = CompareAndCallback(nameof(AirTemp), AirTemp, value);
-                                    break;
-                            }
-                            
-                            IsMetric = parts[2][^1] == 'C';
-                            
-                            break;
-                        }
-                        case "Chlorinator":
-                        {
-                            var value = int.Parse(parts[2][..^1]);
-                        
-                            switch (parts[0])
-                            {
-                                case "Pool": PoolChlorinatorPercent = CompareAndCallback(nameof(PoolChlorinatorPercent), PoolChlorinatorPercent, value);
-                                    break;
-                                case "Spa": SpaChlorinatorPercent = CompareAndCallback(nameof(SpaChlorinatorPercent), SpaChlorinatorPercent, value);
-                                    break;
-                            }
-                            
-                            break;
-                        }
-                        case "Level" when parts[0] == "Salt":
-                        {
-                            var value = Math.Round(float.Parse(parts[2]), 1);
-                            SaltLevel = CompareAndCallback(nameof(SaltLevel), SaltLevel, value);
-                            IsMetric = parts[3] == "g/L";
+                                switch (parts[0])
+                                {
+                                    case "Pool": PoolTemp = CompareAndCallback(nameof(PoolTemp), PoolTemp, temp);
+                                        break;
+                                    case "Spa": SpaTemp = CompareAndCallback(nameof(SpaTemp), SpaTemp, temp);
+                                        break;
+                                    case "Air": AirTemp = CompareAndCallback(nameof(AirTemp), AirTemp, temp);
+                                        break;
+                                }
 
-                            break;
-                        }
-                        case "System" when parts[0] == "Check":
-                        {
-                            var message = string.Join(" ", parts[2..]);
-                            CheckSystemMessage = CompareAndCallback(nameof(CheckSystemMessage), CheckSystemMessage, message);
-                            break;
+                                IsMetric = parts[2][^1] == 'C';
+
+                                break;
+                            }
+                            case "Chlorinator" when parts[2].Length >= 1 && int.TryParse(parts[2][..^1], out var percent):
+                            {
+                                switch (parts[0])
+                                {
+                                    case "Pool": PoolChlorinatorPercent = CompareAndCallback(nameof(PoolChlorinatorPercent), PoolChlorinatorPercent, percent);
+                                        break;
+                                    case "Spa": SpaChlorinatorPercent = CompareAndCallback(nameof(SpaChlorinatorPercent), SpaChlorinatorPercent, percent);
+                                        break;
+                                }
+
+                                break;
+                            }
+                            case "Level" when parts[0] == "Salt" && float.TryParse(parts[2], out var salt):
+                            {
+                                SaltLevel = CompareAndCallback(nameof(SaltLevel), SaltLevel, Math.Round(salt, 1));
+
+                                if (parts.Length >= 4)
+                                    IsMetric = parts[3] == "g/L";
+
+                                break;
+                            }
+                            case "System" when parts[0] == "Check":
+                            {
+                                var message = string.Join(" ", parts[2..]);
+                                CheckSystemMessage = CompareAndCallback(nameof(CheckSystemMessage), CheckSystemMessage, message);
+                                break;
+                            }
                         }
                     }
 
-                    if (parts[0] == "Heater1")
+                    if (parts.Length >= 2 && parts[0] == "Heater1")
                     {
                         HeaterAutoMode = parts[1] == "Auto";
                     }
 
-                    if (parts.Contains("Menu Locked"))
-                    {
-                        MenuLocked = true;
-                    }
+                    // Assign rather than latch, otherwise it never clears once seen
+                    MenuLocked = parts.Contains("Menu Locked");
 
                     if (Display.DisplayChanged)
                     {
                         _logger.Debug("Display update: {Parts}", parts);
-                        
+
                         DisplayUpdated();
                     }
                 }
@@ -417,7 +432,7 @@ namespace AquaLogicSharp
                     _logger.Error("{Message}", ex.Message);
                 }
             }
-            else if (frameType == FRAME_TYPE_LONG_DISPLAY_UPDATE)
+            else if (frameType.SequenceEqual(FRAME_TYPE_LONG_DISPLAY_UPDATE))
             {
                 //Does nothing at the moment
             }
@@ -563,7 +578,9 @@ namespace AquaLogicSharp
                     Enabled = !HeaterAutoMode
                 });
             }
-            else if (state.HasFlag(State.POOL | State.SPA))
+            // Either bit, not both - HasFlag on a composite requires every bit to be present,
+            // which is never true for a single POOL or SPA state.
+            else if ((state & (State.POOL | State.SPA)) != 0)
             {
                 key = Key.POOL_SPA;
                 desiredStates.Add(new DesiredState
@@ -615,6 +632,13 @@ namespace AquaLogicSharp
         {
             MultiSpeedPump = enable;
             return true;
+        }
+
+        public void Dispose()
+        {
+            Interlocked.Exchange(ref _timer, null)?.Dispose();
+            _logger.Dispose();
+            GC.SuppressFinalize(this);
         }
     }
 }

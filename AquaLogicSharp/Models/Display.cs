@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
-using static System.Text.Encoding;
 
 namespace AquaLogicSharp.Models;
 
@@ -13,7 +13,10 @@ public class Display
 
     private byte[] _displayData;
 
-    private const int BlinkingFlag = 1 << 7;        
+    private const byte BlinkingFlag = 1 << 7;
+    private const byte DegreeSymbol = 0xDF;
+    private const byte Colon = (byte)':';
+    private const byte Space = (byte)' ';
 
     public Display()
     {
@@ -23,10 +26,15 @@ public class Display
 
     public void Parse(byte[] bytes)
     {
-        if (bytes[^1] != 0x0)
+        // Reset first, otherwise a rejected frame leaves the previous frame's flag set
+        // and fires a second update for a display that never changed.
+        if (bytes.Length == 0 || bytes[^1] != 0x0)
+        {
+            DisplayChanged = false;
             return;
+        }
 
-        if (_displayData.SequenceEqual(bytes) || CompareByteArrays(_displayData, bytes) == 1)
+        if (_displayData.SequenceEqual(bytes) || IsBlinkOnlyDifference(_displayData, bytes))
         {
             DisplayChanged = false;
             return;
@@ -77,44 +85,87 @@ public class Display
             
             displayBytes = byteReader.ReadDisplaySequence();
 
-            if (displayBytes.Length != 0) 
+            if (displayBytes.Length != 0)
                 continue;
-            
+
             var spaces = byteReader.ReadWhitespace();
-            if (spaces <= 1) 
+            if (spaces <= 1)
                 continue;
-            
+
             DisplaySections.Add(displaySections);
             displaySections = new List<DisplaySection>();
         }
+
+        // A frame that ends without trailing whitespace still has a pending section
+        if (displaySections.Count > 0)
+            DisplaySections.Add(displaySections);
     }
-    
-    public int CompareByteArrays(byte[] oldData, byte[] newData)
+
+    /// <summary>
+    /// True when the only thing separating the two frames is a character blinking:
+    /// either the blink bit toggling, or a colon alternating with a blank. The clock
+    /// flips those every frame and they would otherwise force a redraw each time.
+    /// Anything else — including a single digit of a temperature changing — counts
+    /// as a real update.
+    /// </summary>
+    private static bool IsBlinkOnlyDifference(byte[] oldData, byte[] newData)
     {
         if (oldData.Length != newData.Length)
+            return false;
+
+        var sawDifference = false;
+
+        for (var i = 0; i < oldData.Length; i++)
         {
-            return -1;
+            if (oldData[i] == newData[i])
+                continue;
+
+            var oldChar = (byte)(oldData[i] & ~BlinkingFlag);
+            var newChar = (byte)(newData[i] & ~BlinkingFlag);
+
+            // Same glyph, only the blink bit moved
+            if (oldChar == newChar)
+            {
+                sawDifference = true;
+                continue;
+            }
+
+            // A colon flashing against a blank
+            if ((oldChar == Colon && newChar == Space) || (oldChar == Space && newChar == Colon))
+            {
+                sawDifference = true;
+                continue;
+            }
+
+            return false;
         }
 
-        return newData.Where((t, i) => oldData[i] != t).Count();
+        return sawDifference;
     }
 
-    private (string, bool) ParseUtf8Bytes(byte[] displayBytes)
+    private static (string, bool) ParseUtf8Bytes(byte[] displayBytes)
     {
         var isBlinking = false;
-        for (var i = 0; i < displayBytes.Length; i++)
-        {
-            var @byte = displayBytes[i];
+        var content = new StringBuilder(displayBytes.Length);
 
-            if ((@byte & BlinkingFlag) != BlinkingFlag) 
+        foreach (var @byte in displayBytes)
+        {
+            // 0xDF is the LCD's degree glyph. It has the high bit set but is not a
+            // blinking '_', so it has to be handled before the blink bit is stripped.
+            if (@byte == DegreeSymbol)
+            {
+                content.Append('°');
                 continue;
-                
-            displayBytes[i] = (byte)(@byte & ~BlinkingFlag);
-            isBlinking = true;
+            }
+
+            if ((@byte & BlinkingFlag) == BlinkingFlag)
+                isBlinking = true;
+
+            // Everything is ASCII once the blink bit is cleared
+            content.Append((char)(@byte & ~BlinkingFlag));
         }
-                
-        var content = UTF8.GetString(displayBytes);
-        return (content.Replace("B0", "°").Replace("_", "°"), isBlinking);
+
+        return (content.ToString(), isBlinking);
     }
 
     public override string ToString()

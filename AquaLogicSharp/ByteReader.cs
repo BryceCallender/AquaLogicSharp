@@ -8,7 +8,7 @@ public class ByteReader(byte[] bytes)
     private const byte EOF = 0;
     private const byte Space = 32;
 
-    public bool IsEoF => bytes[_index] == EOF;
+    public bool IsEoF => _index >= bytes.Length || bytes[_index] == EOF;
 
     public int ReadWhitespace()
     {
