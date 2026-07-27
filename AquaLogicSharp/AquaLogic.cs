@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using EnumsNET;
@@ -104,27 +105,30 @@ namespace AquaLogicSharp
             var desiredStates = data.DesiredStates ?? Array.Empty<DesiredState>();
             foreach (var desiredState in desiredStates)
             {
-                // State hasn't changed
-                if (GetState(desiredState.State) != desiredState.Enabled)
-                {
-                    if (!data.Retries.HasValue)
-                        continue;
-
-                    if (--data.Retries != 0)
-                    {
-                        _logger.Information("Requeue...");
-                        SendQueue.Enqueue(data);
-                    }
-                    else
-                    {
-                        AlertAttemptingRequest(false); // attempted as many as it could
-                    }
-                }
-                else
+                if (GetState(desiredState.State) == desiredState.Enabled)
                 {
                     AlertAttemptingRequest(false);
                     _logger.Information("state changed successfully");
+                    continue;
                 }
+
+                // State hasn't changed
+                if (!data.Retries.HasValue)
+                    continue;
+
+                if (--data.Retries != 0)
+                {
+                    _logger.Information("Requeue...");
+                    SendQueue.Enqueue(data);
+                }
+                else
+                {
+                    AlertAttemptingRequest(false); // attempted as many as it could
+                }
+
+                // One requeue per check - a request with several desired states would
+                // otherwise be enqueued once per unsatisfied state.
+                return;
             }
         }
 
@@ -366,7 +370,9 @@ namespace AquaLogicSharp
                     {
                         switch (parts[1])
                         {
-                            case "Temp" when parts[2].Length >= 2 && int.TryParse(parts[2][..^2], out var temp):
+                            // The panel always emits ASCII digits, so parse invariantly rather
+                            // than letting the host locale decide what '.' and '-' mean.
+                            case "Temp" when parts[2].Length >= 2 && int.TryParse(parts[2][..^2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var temp):
                             {
                                 switch (parts[0])
                                 {
@@ -382,7 +388,7 @@ namespace AquaLogicSharp
 
                                 break;
                             }
-                            case "Chlorinator" when parts[2].Length >= 1 && int.TryParse(parts[2][..^1], out var percent):
+                            case "Chlorinator" when parts[2].Length >= 1 && int.TryParse(parts[2][..^1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var percent):
                             {
                                 switch (parts[0])
                                 {
@@ -394,7 +400,7 @@ namespace AquaLogicSharp
 
                                 break;
                             }
-                            case "Level" when parts[0] == "Salt" && float.TryParse(parts[2], out var salt):
+                            case "Level" when parts[0] == "Salt" && float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var salt):
                             {
                                 SaltLevel = CompareAndCallback(nameof(SaltLevel), SaltLevel, Math.Round(salt, 1));
 
@@ -536,7 +542,10 @@ namespace AquaLogicSharp
 
         public List<State> GetStates()
         {
-            var stateList = Enums.GetValues<State>().Where(value => _poolStates.HasFlag(value)).ToList();
+            // EMPTY is zero, and HasFlag(0) is true for everything, so it has to be excluded
+            var stateList = Enums.GetValues<State>()
+                .Where(value => value != State.EMPTY && _poolStates.HasFlag(value))
+                .ToList();
 
             if (_flashingStates.HasFlag(State.FILTER))
                 stateList.Add(State.FILTER_LOW_SPEED);
@@ -569,7 +578,27 @@ namespace AquaLogicSharp
             Key key;
             var desiredStates = new List<DesiredState>();
 
-            if (state.HasFlag(State.HEATER_AUTO_MODE))
+            if (state.Is(State.FILTER_LOW_SPEED))
+            {
+                if (MultiSpeedPump != true)
+                    return false;
+
+                // Send FILTER once. From high speed the pump drops to low; from off, or from
+                // low speed (where we pretend the pump is off), the retry below sends a second
+                // FILTER to land on the speed we want.
+                key = Key.FILTER;
+                desiredStates.Add(new DesiredState
+                {
+                    State = state,
+                    Enabled = !isStateEnabled
+                });
+                desiredStates.Add(new DesiredState
+                {
+                    State = State.FILTER,
+                    Enabled = true
+                });
+            }
+            else if (state.HasFlag(State.HEATER_AUTO_MODE))
             {
                 key = Key.HEATER_1;
                 desiredStates.Add(new DesiredState

@@ -6,6 +6,7 @@ public enum Key
     RIGHT =    0x00000001,
     MENU =     0x00000002,
     LEFT =     0x00000004,
+    LEFTRIGHT = 0x00000005,
     SERVICE =  0x00000008,
     MINUS =    0x00000010,
     PLUS =     0x00000020,
@@ -28,5 +29,6 @@ public enum Key
     AUX_11 =   0x00400000,
     AUX_12 =   0x00800000,
     AUX_13 =   0x01000000,
-    AUX_14 =   0x02000000
+    AUX_14 =   0x02000000,
+    SUPER_CHLORINATE = 0x04000000
 }

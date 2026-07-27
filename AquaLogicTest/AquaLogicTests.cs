@@ -59,6 +59,7 @@ namespace AquaLogicTest
         [InlineData(Key.RIGHT,    "01-00-00-00",    "00-A1")]
         [InlineData(Key.MENU,     "02-00-00-00",    "00-A3")]
         [InlineData(Key.LEFT,     "04-00-00-00",    "00-A7")]
+        [InlineData(Key.LEFTRIGHT,"05-00-00-00",    "00-A9")]
         [InlineData(Key.SERVICE,  "08-00-00-00",    "00-AF")]
         [InlineData(Key.MINUS,    "10-00-00-00-00", "00-BF")]
         [InlineData(Key.PLUS,     "20-00-00-00",    "00-DF")]
@@ -82,6 +83,7 @@ namespace AquaLogicTest
         [InlineData(Key.AUX_12,   "00-00-80-00",    "01-9F")]
         [InlineData(Key.AUX_13,   "00-00-00-01",    "00-A1")]
         [InlineData(Key.AUX_14,   "00-00-00-02",    "00-A3")]
+        [InlineData(Key.SUPER_CHLORINATE, "00-00-00-04", "00-A7")]
         public void TestKeyEventFrame(Key key, string data, string crc)
         {
             const string beginningSequence = "10-02-00-8C-01";
