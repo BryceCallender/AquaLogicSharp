@@ -72,6 +72,11 @@ namespace AquaLogicSharp
 
         private const int READ_TIMEOUT_SECONDS = 5;
 
+        // How long after sending to verify a state change before retrying. A large burst can
+        // hold the bus for ~0.5s, and the LED frame showing the keypress follows after that.
+        // Checking sooner retries a change that already landed, pressing the key again.
+        private static readonly TimeSpan STATE_CHECK_DELAY = TimeSpan.FromSeconds(2);
+
         // Local wired panel (black face with service button)
         private byte[] FRAME_TYPE_LOCAL_WIRED_KEY_EVENT = { 0x00, 0x02 };
         // Remote wired panel (white face)
@@ -137,39 +142,69 @@ namespace AquaLogicSharp
             if (!SendQueue.TryDequeue(out var data))
                 return;
 
+            // A retry sits in the queue until the next keep-alive, and the LED frame showing
+            // the earlier attempt landed may have arrived meanwhile. Sending it anyway would
+            // press the key again and undo the change.
+            var desiredStates = data.DesiredStates ?? Array.Empty<DesiredState>();
+            if (desiredStates.Length > 0 && desiredStates.All(d => GetState(d.State) == d.Enabled))
+            {
+                _logger.Information("State already changed, dropping queued frame");
+                if (AttemptingRequest)
+                    AlertAttemptingRequest(false);
+
+                return;
+            }
+
             if (!AttemptingRequest)
             {
                 AlertAttemptingRequest(true);
             }
 
-            await SendBurst(data.Frame ?? Array.Empty<byte>());
-            _logger.Information("Sent Frame: {Frame}", data.Frame?.Hexlify());
+            var frame = data.Frame ?? Array.Empty<byte>();
+            var burstCount = Math.Max(1, _dataSource.TxBurstCount);
+
+            // Brute force for adapters that miss the post keep-alive window with a single
+            // write. The source decides the count; it is 1 unless the caller opted in.
+            if (_dataSource.TxBurstDelay <= TimeSpan.Zero)
+            {
+                // One write of back to back copies. The adapter streams them onto the bus at
+                // line rate with no gaps, rather than at the mercy of timer resolution.
+                var burst = new byte[frame.Length * burstCount];
+                for (var i = 0; i < burstCount; i++)
+                    frame.CopyTo(burst, i * frame.Length);
+
+                _dataSource.Write(burst);
+            }
+            else
+            {
+                for (var i = 0; i < burstCount; i++)
+                {
+                    _dataSource.Write(frame);
+                    if (i < burstCount - 1)
+                        await Task.Delay(_dataSource.TxBurstDelay);
+                }
+            }
+
+            _logger.Information("Sent ({Count}x): {Frame}", burstCount, frame.Hexlify());
 
             if (data.DesiredStates?.Length > 0)
             {
                 // Replace rather than leak the previous one-shot timer
                 var previous = Interlocked.Exchange(
                     ref _timer,
-                    new Timer(CheckState, data, TimeSpan.FromSeconds(2), Timeout.InfiniteTimeSpan));
+                    new Timer(CheckState, data, STATE_CHECK_DELAY, Timeout.InfiniteTimeSpan));
 
                 previous?.Dispose();
             }
         }
 
-        private async Task SendBurst(byte[] frame)
-        {
-            _logger.Information("Performing a burst write for frame... {Frame}", frame.Hexlify());
-            foreach (var _ in Enumerable.Range(1, 20))
-            {
-                _dataSource.Write(frame);
-                //_logger.Information("Wrote frame at... {Time}", DateTime.Now.TimeOfDay);
-                await Task.Delay(10);
-            }
-        }
-        
         public async Task Process(Action<AquaLogic> callback, CancellationToken cancellationToken = default)
         {
             Callback = callback;
+
+            // The reads below block synchronously, so without yielding first the caller never
+            // gets the Task back - the whole read loop would run on the caller's thread.
+            await Task.Yield();
 
             while (_dataSource.ContinueReading && !cancellationToken.IsCancellationRequested)
             {

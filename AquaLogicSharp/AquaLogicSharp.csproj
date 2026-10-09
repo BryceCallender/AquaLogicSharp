@@ -8,15 +8,15 @@
         <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
         <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
         <RepositoryUrl>https://github.com/BryceCallender/AquaLogicSharp</RepositoryUrl>
-        <LangVersion>12</LangVersion>
-        <TargetFramework>net8.0</TargetFramework>
+        <LangVersion>14</LangVersion>
+        <TargetFramework>net10.0</TargetFramework>
     </PropertyGroup>
 
     <ItemGroup>
-      <PackageReference Include="Serilog" Version="3.0.1" />
-      <PackageReference Include="Serilog.Sinks.Console" Version="4.1.0" />
-      <PackageReference Include="System.IO.Ports" Version="7.0.0" />
-      <PackageReference Include="Enums.NET" Version="4.0.1" />
+      <PackageReference Include="Serilog" Version="4.4.0" />
+      <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
+      <PackageReference Include="System.IO.Ports" Version="10.0.12" />
+      <PackageReference Include="Enums.NET" Version="5.0.0" />
     </ItemGroup>
 
     <ItemGroup>

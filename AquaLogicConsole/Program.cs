@@ -7,16 +7,18 @@ using EnumsNET;
 
 void DataChanged(AquaLogic aquaLogic)
 {
-    foreach(PropertyDescriptor descriptor in TypeDescriptor.GetProperties(aquaLogic))
-    {
-        var name = descriptor.Name;
-        var value = descriptor.GetValue(aquaLogic);
-        Console.WriteLine("{0} = {1}", name, JsonSerializer.Serialize(value));
-    }
+    // foreach(PropertyDescriptor descriptor in TypeDescriptor.GetProperties(aquaLogic))
+    // {
+    //     var name = descriptor.Name;
+    //     var value = descriptor.GetValue(aquaLogic);
+    //     Console.WriteLine("{0} = {1}", name, JsonSerializer.Serialize(value));
+    // }
 }
 
 using var aquaLogic = new AquaLogic();
-var dataSource = new SocketDataSource("192.168.1.169", 8899); // USR-W610
+// The USR-W610 drops single writes, so burst each frame as one back to back write
+var dataSource = new SocketDataSource("192.168.1.169", 8899, // USR-W610
+    txBurstCount: 62, txBurstDelay: TimeSpan.Zero);
 await aquaLogic.Connect(dataSource);
 Console.WriteLine("Connected!");
 Console.WriteLine("To toggle a state, type in the State name, e.g. LIGHTS");
